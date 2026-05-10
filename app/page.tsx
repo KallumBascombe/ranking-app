@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useEffect, useCallback } from "react";
 
 const people = [
@@ -17,180 +18,199 @@ const initialScores = people.reduce((acc, person) => {
 }, {} as Record<string, number>);
 
 export default function Home() {
-  // -------------------------
-  // STATE
-  // -------------------------
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [passwordInput, setPasswordInput] = useState("");
   const [currentPair, setCurrentPair] = useState<[string, string]>(["", ""]);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [lastPair, setLastPair] = useState<string>("");
   const [scores, setScores] = useState<Record<string, number>>(initialScores);
   const [isLoading, setIsLoading] = useState(false);
 
   // -------------------------
-  // API FUNCTIONS
+  // LOAD SCORES
   // -------------------------
-  const saveScores = useCallback(async (updatedScores: Record<string, number>) => {
-    await fetch("/api/scores", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updatedScores),
-    });
-  }, []);
-
   const loadScores = useCallback(async () => {
-    const res = await fetch("/api/scores");
-    const data = await res.json();
+    try {
+      const res = await fetch("/api/scores", { cache: "no-store" });
+      const data = await res.json();
 
-    if (Object.keys(data).length > 0) {
-      setScores(data);
+      if (data && Object.keys(data).length > 0) {
+        setScores(data);
+      }
+    } catch (err) {
+      console.error("Load error:", err);
     }
   }, []);
 
-  const checkPassword = async () => {
-    const res = await fetch("/api/admin-auth", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password: passwordInput }),
-    });
+  // -------------------------
+  // SAVE SCORES
+  // -------------------------
+  const saveScores = useCallback(async (updated: Record<string, number>) => {
+    try {
+      await fetch("/api/scores", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updated),
+      });
+    } catch (err) {
+      console.error("Save error:", err);
+    }
+  }, []);
 
-    if (res.ok) setIsAdmin(true);
-    else alert("Wrong password");
-  };
+  // -------------------------
+  // REAL-TIME POLLING 🔁
+  // -------------------------
+  useEffect(() => {
+    loadScores(); // initial load
+
+    const interval = setInterval(() => {
+      loadScores();
+    }, 3000); // every 3 seconds
+
+    return () => clearInterval(interval);
+  }, [loadScores]);
 
   // -------------------------
   // PAIR GENERATION
   // -------------------------
-  const getRandomPair = useCallback(() => {
-    const personA = people[Math.floor(Math.random() * people.length)];
-    const scoreA = scores[personA];
+  const getRandomPair = useCallback((): [string, string] => {
+    let a = "";
+    let b = "";
+    let key = "";
 
-    const candidates = people
-      .filter((p) => p !== personA)
-      .map((p) => ({
-        name: p,
-        diff: Math.abs(scores[p] - scoreA),
-      }))
-      .sort((a, b) => a.diff - b.diff);
+    do {
+      a = people[Math.floor(Math.random() * people.length)];
 
-    const topN = candidates.slice(0, 3);
+      const scoreA = scores[a];
 
-    const personB =
-      topN[Math.floor(Math.random() * topN.length)].name;
+      const candidates = people
+        .filter((p) => p !== a)
+        .map((p) => ({
+          name: p,
+          diff: Math.abs(scores[p] - scoreA),
+        }))
+        .sort((x, y) => x.diff - y.diff);
 
-    return [personA, personB] as [string, string];
-  }, [scores]);
+      const top = candidates.slice(0, 3);
+      b = top[Math.floor(Math.random() * top.length)].name;
+
+      key = [a, b].sort().join("-");
+    } while (key === lastPair);
+
+    return [a, b];
+  }, [scores, lastPair]);
 
   // -------------------------
-  // GAME LOGIC
+  // SCORE UPDATE
   // -------------------------
   const updateScores = (winner: string, loser: string) => {
     setScores((prev) => {
       const K = 32;
 
-      const winnerScore = prev[winner];
-      const loserScore = prev[loser];
+      const w = prev[winner];
+      const l = prev[loser];
 
-      const expectedWinner =
-        1 / (1 + Math.pow(10, (loserScore - winnerScore) / 400));
+      const expectedW =
+        1 / (1 + Math.pow(10, (l - w) / 400));
 
-      const expectedLoser = 1 - expectedWinner;
+      const expectedL = 1 - expectedW;
 
-      return {
+      const updated = {
         ...prev,
-        [winner]: Math.round(winnerScore + K * (1 - expectedWinner)),
-        [loser]: Math.round(loserScore + K * (0 - expectedLoser)),
+        [winner]: Math.round(w + K * (1 - expectedW)),
+        [loser]: Math.round(l + K * (0 - expectedL)),
       };
+
+      saveScores(updated); // persist immediately
+      return updated;
     });
   };
 
-const nextRound = (chosen: string) => {
-  if (isLoading) return;
+  // -------------------------
+  // GAME FLOW
+  // -------------------------
+  const nextRound = (chosen: string) => {
+    if (isLoading) return;
 
-  setIsLoading(true);
+    setIsLoading(true);
 
-  const [a, b] = currentPair;
+    const [a, b] = currentPair;
+    const winner = chosen;
+    const loser = chosen === a ? b : a;
 
-  const winner = chosen;
-  const loser = chosen === a ? b : a;
+    updateScores(winner, loser);
+    setLastPair([a, b].sort().join("-"));
 
-  updateScores(winner, loser);
-
-  setTimeout(() => {
-    setCurrentPair(getRandomPair());
-    setIsLoading(false);
-  }, 250);
-};
+    setTimeout(() => {
+      setCurrentPair(getRandomPair());
+      setIsLoading(false);
+    }, 200);
+  };
 
   // -------------------------
-  // EFFECTS (LIFECYCLE)
+  // INIT PAIR
   // -------------------------
-  useEffect(() => {
-    loadScores();
-  }, [loadScores]);
-
   useEffect(() => {
     if (Object.keys(scores).length > 0 && currentPair[0] === "") {
       setCurrentPair(getRandomPair());
     }
   }, [scores, currentPair, getRandomPair]);
 
-  useEffect(() => {
-    saveScores(scores);
-  }, [scores, saveScores]);
-
   // -------------------------
   // UI
   // -------------------------
   return (
-    <main className="min-h-screen flex flex-col items-center justify-center p-6 bg-gray-50">
+    <main className="relative min-h-screen flex flex-col items-center justify-center p-6 bg-gray-50">
+
       <h1 className="text-2xl font-bold mb-10 text-gray-800">
         Who ranks higher?
       </h1>
 
-      <div className="w-full max-w-md flex flex-col gap-6">
-        <p className="text-sm text-gray-500 text-center">
-          Comparison
-        </p>
-        {isLoading && (
-  <div className="text-sm text-blue-500 text-center">
-    Calculating result...
-  </div>
-)}
+      {/* MENU */}
+      <div className="absolute top-4 right-4">
+        <button
+          onClick={() => setMenuOpen(!menuOpen)}
+          className="text-2xl font-bold"
+        >
+          ☰
+        </button>
 
-        <div className="w-full max-w-md mb-6">
-          <h2 className="text-lg font-bold mb-2">Leaderboard</h2>
-
-          <div className="space-y-1 text-sm">
-            {Object.entries(scores)
-              .sort((a, b) => b[1] - a[1])
-              .map(([name, score]) => (
-                <div key={name} className="flex justify-between">
-                  <span>{name}</span>
-                  <span>{score}</span>
-                </div>
-              ))}
+        {menuOpen && (
+          <div className="absolute right-0 mt-2 w-48 bg-white border rounded-lg shadow-lg p-3 z-50">
+            <Link
+              href="/leaderboard"
+              className="block py-2 hover:text-blue-600"
+              onClick={() => setMenuOpen(false)}
+            >
+              View Leaderboard
+            </Link>
           </div>
-        </div>
+        )}
+      </div>
 
-<button
-  onClick={() => nextRound(currentPair[0])}
-  disabled={isLoading}
-  className={`w-full p-6 bg-white border rounded-xl shadow-sm text-lg font-medium transition ${
-    isLoading ? "opacity-50 cursor-not-allowed" : "active:scale-95"
-  }`}
->
-  {currentPair[0]}
-</button>
+      {/* GAME */}
+      <div className="w-full max-w-md flex flex-col gap-6">
 
-<button
-  onClick={() => nextRound(currentPair[1])}
-  disabled={isLoading}
-  className={`w-full p-6 bg-white border rounded-xl shadow-sm text-lg font-medium transition ${
-    isLoading ? "opacity-50 cursor-not-allowed" : "active:scale-95"
-  }`}
->
-  {currentPair[1]}
-</button>
+        {isLoading && (
+          <div className="text-sm text-blue-500 text-center">
+            Calculating result...
+          </div>
+        )}
+
+        <button
+          onClick={() => nextRound(currentPair[0])}
+          disabled={isLoading}
+          className="w-full p-6 bg-white border rounded-xl shadow-sm text-lg font-medium"
+        >
+          {currentPair[0]}
+        </button>
+
+        <button
+          onClick={() => nextRound(currentPair[1])}
+          disabled={isLoading}
+          className="w-full p-6 bg-white border rounded-xl shadow-sm text-lg font-medium"
+        >
+          {currentPair[1]}
+        </button>
+
       </div>
     </main>
   );
