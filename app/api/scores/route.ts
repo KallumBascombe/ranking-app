@@ -13,36 +13,12 @@ const db = client.database("game");
 const container = db.container("scores");
 
 // -------------------------
-// NORMALIZATION (optional safety pass)
+// CONFIG
 // -------------------------
-function normalize(scores: Record<string, any>) {
-  const values = Object.values(scores)
-    .map((v: any) => v?.rating ?? v)
-    .filter((v) => typeof v === "number");
-
-  if (!values.length) return scores;
-
-  const mean = values.reduce((a, b) => a + b, 0) / values.length;
-  const drift = 1000 - mean;
-
-  const adjusted: Record<string, any> = {};
-
-  for (const [name, value] of Object.entries(scores)) {
-    const rating = typeof value === "number"
-      ? value
-      : value?.rating ?? 1000;
-
-    adjusted[name] = {
-      rating: Math.round(rating + drift),
-      games: value?.games ?? 0,
-    };
-  }
-
-  return adjusted;
-}
+const BASE_RATING = 1000;
 
 // -------------------------
-// SAFE READ
+// SAFE GET DOC
 // -------------------------
 async function getLeaderboardDoc() {
   try {
@@ -65,18 +41,59 @@ async function getLeaderboardDoc() {
 }
 
 // -------------------------
+// PLAYER NORMALISATION
+// -------------------------
+function getPlayer(scores: any, name: string) {
+  const raw = scores?.[name];
+
+  if (!raw) {
+    return { rating: BASE_RATING, games: 0 };
+  }
+
+  if (typeof raw === "number") {
+    return { rating: raw, games: 0 };
+  }
+
+  return {
+    rating: raw.rating ?? BASE_RATING,
+    games: raw.games ?? 0,
+  };
+}
+
+// -------------------------
+// EXPECTED SCORE
+// -------------------------
+function expectedScore(a: number, b: number) {
+  return 1 / (1 + Math.pow(10, (b - a) / 400));
+}
+
+// -------------------------
+// K FACTOR (SMOOTHER PROGRESSION)
+// -------------------------
+function kFactor(games: number) {
+  if (games < 10) return 48;
+  if (games < 25) return 40;
+  if (games < 60) return 32;
+  return 24;
+}
+
+// -------------------------
+// ELITE BOOST (FIXES 1100+ CAP ISSUE)
+// -------------------------
+function eliteBoost(rating: number) {
+  if (rating >= 1300) return 1.25;
+  if (rating >= 1200) return 1.15;
+  if (rating >= 1100) return 1.08;
+  return 1;
+}
+
+// -------------------------
 // GET
 // -------------------------
 export async function GET() {
   try {
     const doc = await getLeaderboardDoc();
-    const rawScores = doc?.scores;
-
-    if (!rawScores) {
-      return NextResponse.json({});
-    }
-
-    return NextResponse.json(normalize(rawScores));
+    return NextResponse.json(doc?.scores || {});
   } catch (err) {
     console.error("GET /scores failed:", err);
     return NextResponse.json({});
@@ -84,7 +101,7 @@ export async function GET() {
 }
 
 // -------------------------
-// POST (ELO ENGINE)
+// POST (IMPROVED ELO ENGINE)
 // -------------------------
 export async function POST(req: Request) {
   try {
@@ -100,45 +117,45 @@ export async function POST(req: Request) {
     const doc = await getLeaderboardDoc();
     const scores = doc.scores || {};
 
-    const getPlayer = (name: string) => {
-      const raw = scores[name];
-
-      if (!raw) return { rating: 1000, games: 0 };
-
-      if (typeof raw === "number") {
-        return { rating: raw, games: 0 };
-      }
-
-      return {
-        rating: raw.rating ?? 1000,
-        games: raw.games ?? 0,
-      };
-    };
-
-    const w = getPlayer(winner);
-    const l = getPlayer(loser);
+    const w = getPlayer(scores, winner);
+    const l = getPlayer(scores, loser);
 
     // -------------------------
     // EXPECTED SCORE
     // -------------------------
-    const expectedW =
-      1 / (1 + Math.pow(10, (l.rating - w.rating) / 400));
+    const expectedW = expectedScore(w.rating, l.rating);
 
     // -------------------------
-    // K FACTOR (slightly dynamic)
+    // K FACTOR (AVERAGED - FIXES COMPRESSION)
     // -------------------------
-    const kWinner = 32 / (1 + w.games * 0.1);
-    const kLoser = 32 / (1 + l.games * 0.1);
+    const k = (kFactor(w.games) + kFactor(l.games)) / 2;
 
     // -------------------------
-    // ELO CHANGES (IMPORTANT FIX POINT)
+    // UPSET BOOST
     // -------------------------
-    const winnerChange = Math.round(kWinner * (1 - expectedW));
-    const loserChange = Math.round(kLoser * (0 - (1 - expectedW)));
+    const upsetMultiplier = w.rating < l.rating ? 1.12 : 1;
 
+    // -------------------------
+    // FINAL DELTAS
+    // -------------------------
+    const winnerChange = Math.round(
+      k *
+      (1 - expectedW) *
+      upsetMultiplier *
+      eliteBoost(w.rating)
+    );
+
+    const loserChange = -winnerChange;
+
+    // -------------------------
+    // NEW RATINGS
+    // -------------------------
     const newWinnerRating = w.rating + winnerChange;
     const newLoserRating = l.rating + loserChange;
 
+    // -------------------------
+    // SAVE SCORES
+    // -------------------------
     const updatedScores = {
       ...scores,
 
@@ -153,9 +170,6 @@ export async function POST(req: Request) {
       },
     };
 
-    // -------------------------
-    // SAVE LEADERBOARD
-    // -------------------------
     await container.items.upsert({
       id: "leaderboard",
       type: "leaderboard",
@@ -164,7 +178,7 @@ export async function POST(req: Request) {
     });
 
     // -------------------------
-    // MATCH LOG (FOR LIVE FEED / CASINO UI)
+    // MATCH LOG
     // -------------------------
     await container.items.create({
       id: `match_${Date.now()}`,
@@ -179,11 +193,10 @@ export async function POST(req: Request) {
     });
 
     // -------------------------
-    // IMPORTANT: RETURN DELTAS
+    // RESPONSE
     // -------------------------
     return NextResponse.json({
       ok: true,
-      scores: updatedScores,
       result: {
         winner,
         loser,
@@ -193,6 +206,7 @@ export async function POST(req: Request) {
         loserAfter: Math.round(newLoserRating),
       },
     });
+
   } catch (err) {
     console.error("POST /scores failed:", err);
 

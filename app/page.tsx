@@ -77,7 +77,6 @@ const people: string[] = [
 type Player = {
   rating: number;
   games: number;
-  streak?: number;
 };
 
 type Match = {
@@ -89,63 +88,110 @@ type Match = {
 // -------------------------
 // HELPERS
 // -------------------------
-const formatTime = (ts: number) => {
-  const d = new Date(ts);
-  return d.toLocaleTimeString([], {
+const formatTime = (ts: number) =>
+  new Date(ts).toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
   });
+
+const pick = <T,>(arr: T[]) =>
+  arr[Math.floor(Math.random() * arr.length)];
+
+// -------------------------
+// RANK SYSTEM
+// -------------------------
+const getRank = (rating: number) => {
+  if (rating >= 1200) return { name: "DIAMOND", icon: "💎" };
+  if (rating >= 1000) return { name: "PLATINUM", icon: "🏆" };
+  if (rating >= 900) return { name: "GOLD", icon: "🥇" };
+  if (rating >= 800) return { name: "SILVER", icon: "🥈" };
+  return { name: "BRONZE", icon: "🥉" };
 };
 
 // -------------------------
-// BADGES
+// SKILL MATCH (CLEAN)
 // -------------------------
-const getBadge = (player: Player) => {
-  if (player.rating >= 1700) return "ELITE";
-  if (player.games >= 50) return "GRINDER";
-  return "";
-};
+const getSkillMatch = (aRating: number, bRating: number) => {
+  const diff = aRating - bRating;
+  const abs = Math.abs(diff);
 
-// -------------------------
-// STREAK
-// -------------------------
-const StreakIndicator = ({ streak = 0 }: { streak?: number }) => {
-  if (!streak || streak < 3) return null;
+  let label = "";
+  let color = "text-zinc-400";
 
-  const color =
-    streak >= 10 ? "bg-red-500" :
-    streak >= 6 ? "bg-orange-500" :
-    "bg-yellow-500";
+  if (abs < 25) {
+    label = "Even Match";
+    color = "text-green-400";
+  } else if (abs < 100) {
+    label = "Slight Favourite";
+    color = "text-zinc-300";
+  } else if (abs < 200) {
+    label = "Clear Favourite";
+    color = "text-yellow-400";
+  } else {
+    label = "Mismatch";
+    color = "text-red-400";
+  }
 
-  return (
-    <div className="flex items-center gap-1 mt-2">
-      {Array.from({ length: Math.min(streak, 8) }).map((_, i) => (
-        <div key={i} className={`w-2 h-2 rounded-sm ${color}`} />
-      ))}
-      <span className="text-xs text-zinc-400 ml-2">
-        {streak} win streak
-      </span>
-    </div>
-  );
+  return {
+    label,
+    color,
+    favSide: diff > 0 ? "A" : diff < 0 ? "B" : null,
+  };
 };
 
 // -------------------------
 // COMMENTARY
 // -------------------------
-const pick = <T,>(arr: T[]) =>
-  arr[Math.floor(Math.random() * arr.length)];
+const commentaryTemplates = {
+  normal: [
+    (w: string, l: string) =>
+      `${w} absolutely controls that — ${l} never looked comfortable.`,
+    (w: string, l: string) =>
+      `${w} takes it cleanly. ${l} just ran out of ideas.`,
+    (w: string, l: string) =>
+      `Solid win for ${w}. ${l} will want that one back.`,
+    (w: string, l: string) =>
+      `${w} handles business like a professional.`,
+  ],
+  upset: [
+    (w: string, l: string) =>
+      `🚨 ABSOLUTE SCENES — ${w} just dismantles ${l}!`,
+    (w: string, l: string) =>
+      `WHAT?! ${w} sends ${l} into shock territory.`,
+    (w: string, l: string) =>
+      `${l} will NOT be sleeping well tonight.`,
+    (w: string, l: string) =>
+      `Group chat is going CRAZY after that result.`,
+  ],
+  dominance: [
+    (w: string, l: string) =>
+      `${w} is farming ELO at this point. ${l} got deleted.`,
+    (w: string, l: string) =>
+      `That was a mismatch. ${w} steamrolls ${l}.`,
+  ],
+  close: [
+    (w: string, l: string) =>
+      `That was tight — ${w} just edges out ${l}.`,
+    (w: string, l: string) =>
+      `Barely anything in it, but ${w} gets it done.`,
+  ],
+};
 
-const commentaryLines = (winner: string, loser: string, upset: boolean) => [
-  upset
-    ? `🚨 UPSET ALERT: ${winner} shocks ${loser}`
-    : `🔥 ${winner} takes down ${loser}`,
+const pickCommentary = (
+  winner: string,
+  loser: string,
+  upset: boolean,
+  ratingGap: number
+) => {
+  let pool;
 
-  `${winner} showing strong form tonight`,
+  if (upset) pool = commentaryTemplates.upset;
+  else if (ratingGap >= 200) pool = commentaryTemplates.dominance;
+  else if (ratingGap <= 40) pool = commentaryTemplates.close;
+  else pool = commentaryTemplates.normal;
 
-  `Momentum shifts after that result`,
-
-  `${loser} needs a comeback`
-];
+  return pick(pool)(winner, loser);
+};
 
 // -------------------------
 // MAIN
@@ -155,14 +201,11 @@ export default function Home() {
   const [scores, setScores] = useState<Record<string, Player>>({});
   const [history, setHistory] = useState<Match[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [lastDelta, setLastDelta] = useState<number | null>(null);
   const [commentaryFeed, setCommentaryFeed] = useState<string[]>([]);
+  const [lastDelta, setLastDelta] = useState<number | null>(null);
 
   const mountedRef = useRef(true);
 
-  // -------------------------
-  // LOAD
-  // -------------------------
   const loadScores = useCallback(async () => {
     const res = await fetch("/api/scores", { cache: "no-store" });
     const data = await res.json();
@@ -172,59 +215,45 @@ export default function Home() {
   const loadHistory = useCallback(async () => {
     const res = await fetch(`/api/matches?t=${Date.now()}`);
     const data = await res.json();
-
     if (mountedRef.current && Array.isArray(data)) {
       setHistory(data.slice(-30).reverse());
     }
   }, []);
 
-  // -------------------------
-  // HELPERS
-  // -------------------------
   const getRating = (name: string) =>
     scores?.[name]?.rating ?? 1000;
-
-  const getPlayer = (name: string): Player =>
-    scores?.[name] ?? { rating: 1000, games: 0, streak: 0 };
 
   const getPair = (): [string, string] => {
     let a = people[Math.floor(Math.random() * people.length)];
     let b = people[Math.floor(Math.random() * people.length)];
-
-    while (a === b) {
-      b = people[Math.floor(Math.random() * people.length)];
-    }
-
+    while (a === b) b = people[Math.floor(Math.random() * people.length)];
     return [a, b];
   };
 
   // -------------------------
-  // BIGGEST UPSET
+  // HALL OF FAME (BIGGEST UPSET ONLY)
   // -------------------------
-  const biggestUpset = useMemo(() => {
+  const hallOfFame = useMemo(() => {
     if (!history.length) return null;
 
-    let best: Match | null = null;
+    let biggestUpset = history[0];
     let maxDiff = 0;
 
     for (const m of history) {
-      const w = scores[m.winner]?.rating ?? 1000;
-      const l = scores[m.loser]?.rating ?? 1000;
+      const w = getRating(m.winner);
+      const l = getRating(m.loser);
 
       const diff = l - w;
 
       if (diff > maxDiff) {
         maxDiff = diff;
-        best = m;
+        biggestUpset = m;
       }
     }
 
-    return best;
+    return { biggestUpset };
   }, [history, scores]);
 
-  // -------------------------
-  // UPDATE SCORES
-  // -------------------------
   const updateScores = async (winner: string, loser: string) => {
     const res = await fetch("/api/scores", {
       method: "POST",
@@ -235,9 +264,6 @@ export default function Home() {
     return res.json();
   };
 
-  // -------------------------
-  // VOTE
-  // -------------------------
   const nextRound = async (chosen: string) => {
     if (isLoading) return;
 
@@ -250,6 +276,7 @@ export default function Home() {
     const wRating = getRating(winner);
     const lRating = getRating(loser);
     const upset = wRating < lRating;
+    const ratingGap = Math.abs(wRating - lRating);
 
     setCurrentPair(getPair());
 
@@ -258,34 +285,26 @@ export default function Home() {
 
       setLastDelta(data?.result?.winnerChange ?? null);
 
-      const lines = commentaryLines(winner, loser, upset);
+      const text = pickCommentary(winner, loser, upset, ratingGap);
 
-      setCommentaryFeed(prev => [
-        `${new Date().toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        })} — ${pick(lines)}`,
-        ...prev
+      setCommentaryFeed((prev) => [
+        `${formatTime(Date.now())} — ${text}`,
+        ...prev,
       ].slice(0, 6));
 
       await loadHistory();
     } finally {
       setIsLoading(false);
-      setTimeout(() => setLastDelta(null), 1200);
+      setTimeout(() => setLastDelta(null), 1500);
     }
   };
 
-  // -------------------------
-  // INIT
-  // -------------------------
   useEffect(() => {
     mountedRef.current = true;
-
     loadScores();
     loadHistory();
 
     const interval = setInterval(loadHistory, 8000);
-
     return () => {
       mountedRef.current = false;
       clearInterval(interval);
@@ -298,38 +317,35 @@ export default function Home() {
     }
   }, [scores]);
 
-  // -------------------------
-  // UI
-  // -------------------------
+  const skill = useMemo(() => {
+    if (!currentPair[0] || !currentPair[1]) {
+      return { label: "", color: "", favSide: null };
+    }
+
+    return getSkillMatch(
+      getRating(currentPair[0]),
+      getRating(currentPair[1])
+    );
+  }, [currentPair, scores]);
+
+  const favA = skill.favSide === "A";
+  const favB = skill.favSide === "B";
+
   return (
     <main className="min-h-screen bg-black text-white flex flex-col items-center px-4 py-10">
 
-      {/* HEADER */}
       <div className="w-full max-w-4xl flex justify-between mb-8">
-        <h1 className="text-2xl font-bold">🎰 Poker Arena</h1>
-
+        <h1 className="text-2xl font-bold">🎰 Swindon Poker Arena</h1>
         <Link href="/leaderboard" className="bg-purple-600 px-4 py-2 rounded-lg">
           Leaderboard
         </Link>
       </div>
 
-      {/* TOP ROW */}
       <div className="w-full max-w-4xl flex gap-4">
 
-        {/* LEFT */}
         <div className="w-1/3 space-y-4">
-
-          {biggestUpset && (
-            <div className="bg-red-950 border border-red-600 rounded-xl p-4">
-              <div className="text-xs text-red-300 mb-1">😭 Biggest Upset 😭</div>
-              <div className="text-white font-bold text-sm">
-                {biggestUpset.winner} shocked {biggestUpset.loser}
-              </div>
-            </div>
-          )}
-
           <div className="bg-zinc-900 rounded-xl p-4">
-            <h3 className="text-xs text-zinc-400 mb-2">🧠 Commentary</h3>
+            <h3 className="text-xs text-zinc-400 mb-2">🧠 ESPN Commentary</h3>
 
             {commentaryFeed.length === 0 ? (
               <p className="text-zinc-500 text-sm">Waiting for action...</p>
@@ -343,19 +359,27 @@ export default function Home() {
           </div>
         </div>
 
-        {/* GAME */}
-        <div className="w-2/3 bg-zinc-900 rounded-2xl p-6 space-y-6">
+        <div className="w-1/3 bg-zinc-900 rounded-2xl p-6 space-y-6">
 
           <p className="text-zinc-400 text-sm">
             Pick who wins — live ELO battle system
           </p>
+
+          {favA && (
+            <div className="text-center text-[10px] text-zinc-400">
+              {skill.label}
+            </div>
+          )}
 
           <button
             onClick={() => nextRound(currentPair[0])}
             disabled={isLoading}
             className="w-full bg-zinc-800 p-6 rounded-xl text-left"
           >
-            <div className="text-xl font-bold">{currentPair[0]}</div>
+            <div className="text-xl font-bold flex gap-2 items-center">
+              {currentPair[0]}
+              <span>{getRank(getRating(currentPair[0])).icon}</span>
+            </div>
             <div className="text-sm text-zinc-400">
               ELO: {getRating(currentPair[0])}
             </div>
@@ -363,34 +387,65 @@ export default function Home() {
 
           <div className="text-center text-zinc-500">VS</div>
 
+          {favB && (
+            <div className="text-center text-[10px] text-zinc-400">
+              {skill.label}
+            </div>
+          )}
+
           <button
             onClick={() => nextRound(currentPair[1])}
             disabled={isLoading}
             className="w-full bg-zinc-800 p-6 rounded-xl text-left"
           >
-            <div className="text-xl font-bold">{currentPair[1]}</div>
+            <div className="text-xl font-bold flex gap-2 items-center">
+              {currentPair[1]}
+              <span>{getRank(getRating(currentPair[1])).icon}</span>
+            </div>
             <div className="text-sm text-zinc-400">
               ELO: {getRating(currentPair[1])}
             </div>
           </button>
 
           {lastDelta !== null && (
-            <div className="text-green-400 text-sm animate-pulse">
+            <div className="text-green-400 text-sm animate-pulse mt-2">
               +{lastDelta} ELO gained 🔥
+            </div>
+          )}
+        </div>
+
+        <div className="w-1/3 space-y-4">
+
+          <div className="bg-zinc-900 rounded-xl p-4 text-xs space-y-2">
+            <div className="font-bold mb-2">Rank Legend</div>
+            <div>💎 1200+ Diamond</div>
+            <div>🏆 1000–1199 Platinum</div>
+            <div>🥇 900–999 Gold</div>
+            <div>🥈 800–899 Silver</div>
+            <div>🥉 0–799 Bronze</div>
+          </div>
+
+          {hallOfFame && (
+            <div className="bg-zinc-900 rounded-xl p-4 text-xs space-y-2">
+              <div className="font-bold mb-2">🏛 Hall of Fame</div>
+              <div>
+                😭 Biggest upset 😭:{" "}
+                <b>{hallOfFame.biggestUpset?.winner}</b> vs{" "}
+                {hallOfFame.biggestUpset?.loser}
+              </div>
             </div>
           )}
         </div>
       </div>
 
-      {/* MATCH FEED WITH TIMESTAMPS */}
       <div className="w-full max-w-4xl mt-8">
         <h3 className="text-sm text-zinc-400 mb-2">📊 Live Match Feed</h3>
 
         <div className="bg-zinc-900 rounded-xl p-4 space-y-2">
           {history.map((m, i) => (
-            <div key={i} className="text-sm text-zinc-300 flex justify-between">
+            <div key={i} className="flex justify-between text-sm text-zinc-300">
               <span>
-                🔥 <b>{m.winner}</b> defeats {m.loser}
+                {getRank(getRating(m.winner)).icon} <b>{m.winner}</b> defeats {m.loser}
               </span>
               <span className="text-zinc-500 text-xs">
                 {formatTime(m.timestamp)}
