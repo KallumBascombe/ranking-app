@@ -6,7 +6,70 @@ import { useState, useEffect, useCallback, useRef } from "react";
 // -------------------------
 // PEOPLE LIST
 // -------------------------
-const people: string[] = [/* your full list unchanged */];
+const people: string[] = [
+  "Kallum Bascombe",
+  "Johnathan Brown",
+  "Jamie Fisher",
+  "Bogdan Constantin",
+  "Andy Mcleod",
+  "Sanjay Chudasama",
+  "Alvin Roy",
+  "Deano",
+  "Joe Smith",
+  "Bruno",
+  "Juniel Sueta",
+  "Steve Law",
+  "Florian Pajour",
+  "Tomasz TM",
+  "Jo C",
+  "Tom Hudson",
+  "Tom Byfield",
+  "Nippy",
+  "Pete Fisher",
+  "Colin Mitchell",
+  "Liviu",
+  "Graham Smith",
+  "Neil Laybourne",
+  "Sandra Hardwick",
+  "Faye Kew",
+  "Raghu",
+  "Bryan Clark",
+  "Matt Miller",
+  "Dave Dyer",
+  "Melvin Saunders",
+  "Deb Fisher",
+  "Andy Cannon",
+  "Errol Williams",
+  "David Redshaw",
+  "Jemma-Louise Hart",
+  "Jack Dealer",
+  "Justin Reakes",
+  "Ewan",
+  "Martin Connolly",
+  "Tim Bohane",
+  "Telmo",
+  "Victor Ribeiro",
+  "Minnow",
+  "Ryan Bascombe",
+  "Barry Cobb",
+  "Adam Bailey",
+  "Ben Moody",
+  "Jason Moody",
+  "Emzy",
+  "Darrell Rock",
+  "Karin Willis",
+  "Sean Quinn",
+  "Matthew Bowden",
+  "Lucky",
+  "Derek Potter",
+  "Weasel",
+  "Spud",
+  "Owner Adam",
+  "John Watkins",
+  "John Beard",
+  "Alin",
+  "Jamie Hall",
+];
 
 // -------------------------
 // TYPES
@@ -24,7 +87,7 @@ type Match = {
 };
 
 // -------------------------
-// BADGES (NO EMOJIS HERE ANYMORE)
+// BADGES
 // -------------------------
 const getBadge = (player: Player) => {
   if (player.rating >= 1700) return "ELITE";
@@ -33,12 +96,12 @@ const getBadge = (player: Player) => {
 };
 
 // -------------------------
-// STREAK DISPLAY (STRICT RULES)
+// STREAK DISPLAY
 // -------------------------
 const StreakIndicator = ({ streak = 0 }: { streak?: number }) => {
   if (!streak || streak < 3) return null;
 
-  const intensity =
+  const color =
     streak >= 10 ? "bg-red-500"
     : streak >= 6 ? "bg-orange-500"
     : "bg-yellow-500";
@@ -46,10 +109,7 @@ const StreakIndicator = ({ streak = 0 }: { streak?: number }) => {
   return (
     <div className="flex items-center gap-1 mt-2">
       {Array.from({ length: Math.min(streak, 8) }).map((_, i) => (
-        <div
-          key={i}
-          className={`w-2 h-2 rounded-sm ${intensity}`}
-        />
+        <div key={i} className={`w-2 h-2 rounded-sm ${color}`} />
       ))}
       <span className="text-xs text-zinc-400 ml-2">
         {streak} win streak
@@ -77,7 +137,7 @@ export default function Home() {
   const mountedRef = useRef(true);
 
   // -------------------------
-  // LOAD
+  // LOAD SCORES
   // -------------------------
   const loadScores = useCallback(async () => {
     const res = await fetch("/api/scores", { cache: "no-store" });
@@ -85,6 +145,9 @@ export default function Home() {
     if (mountedRef.current) setScores(data || {});
   }, []);
 
+  // -------------------------
+  // LOAD HISTORY
+  // -------------------------
   const loadHistory = useCallback(async () => {
     const res = await fetch(`/api/matches?t=${Date.now()}`);
     const data = await res.json();
@@ -112,7 +175,7 @@ export default function Home() {
   };
 
   // -------------------------
-  // UPDATE
+  // UPDATE SCORES
   // -------------------------
   const updateScores = async (winner: string, loser: string) => {
     const res = await fetch("/api/scores", {
@@ -192,7 +255,7 @@ export default function Home() {
           Pick who wins — live ELO battle system
         </p>
 
-        {/* PLAYER A */}
+        {/* A */}
         <button
           onClick={() => nextRound(currentPair[0])}
           disabled={isLoading}
@@ -214,7 +277,7 @@ export default function Home() {
 
         <div className="text-center text-zinc-500">VS</div>
 
-        {/* PLAYER B */}
+        {/* B */}
         <button
           onClick={() => nextRound(currentPair[1])}
           disabled={isLoading}
