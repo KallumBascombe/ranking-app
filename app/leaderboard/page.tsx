@@ -95,6 +95,11 @@ export default function LeaderboardPage() {
     );
   }
 
+{/* DEPLOY TEST */}
+<p className="text-xs text-gray-400">
+  deploy test 2026-05-11
+</p>
+
   // -------------------------
   // LEADERBOARD
   // -------------------------

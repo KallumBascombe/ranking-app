@@ -7,6 +7,7 @@ if (!connectionString) {
   throw new Error("Missing COSMOS_CONNECTION_STRING env variable");
 }
 
+
 const client = new CosmosClient(connectionString);
 
 const db = client.database("game");
@@ -28,9 +29,9 @@ export async function GET() {
   }
 }
 
-// -------------------------
+// ------------------------
 // POST vote (winner/loser)
-// -------------------------
+// ------------------------
 export async function POST(req: Request) {
   const { winner, loser } = await req.json();
 
