@@ -13,14 +13,14 @@ const db = client.database("game");
 const container = db.container("scores");
 
 // -------------------------
-// NORMALIZATION
+// NORMALIZATION (optional safety pass)
 // -------------------------
 function normalize(scores: Record<string, any>) {
   const values = Object.values(scores)
     .map((v: any) => v?.rating ?? v)
     .filter((v) => typeof v === "number");
 
-  if (values.length === 0) return scores;
+  if (!values.length) return scores;
 
   const mean = values.reduce((a, b) => a + b, 0) / values.length;
   const drift = 1000 - mean;
@@ -28,21 +28,21 @@ function normalize(scores: Record<string, any>) {
   const adjusted: Record<string, any> = {};
 
   for (const [name, value] of Object.entries(scores)) {
-    if (typeof value === "number") {
-      adjusted[name] = Math.round(value + drift);
-    } else {
-      adjusted[name] = {
-        rating: Math.round((value?.rating ?? 1000) + drift),
-        games: value?.games ?? 0,
-      };
-    }
+    const rating = typeof value === "number"
+      ? value
+      : value?.rating ?? 1000;
+
+    adjusted[name] = {
+      rating: Math.round(rating + drift),
+      games: value?.games ?? 0,
+    };
   }
 
   return adjusted;
 }
 
 // -------------------------
-// SAFE READ HELPER
+// SAFE READ
 // -------------------------
 async function getLeaderboardDoc() {
   try {
@@ -52,7 +52,6 @@ async function getLeaderboardDoc() {
 
     return resource;
   } catch {
-    // auto-create if missing (prevents silent empty DB bugs)
     const empty = {
       id: "leaderboard",
       type: "leaderboard",
@@ -71,10 +70,9 @@ async function getLeaderboardDoc() {
 export async function GET() {
   try {
     const doc = await getLeaderboardDoc();
-
     const rawScores = doc?.scores;
 
-    if (!rawScores || typeof rawScores !== "object") {
+    if (!rawScores) {
       return NextResponse.json({});
     }
 
@@ -86,7 +84,7 @@ export async function GET() {
 }
 
 // -------------------------
-// POST (ELO CORE)
+// POST (ELO ENGINE)
 // -------------------------
 export async function POST(req: Request) {
   try {
@@ -105,55 +103,52 @@ export async function POST(req: Request) {
     const getPlayer = (name: string) => {
       const raw = scores[name];
 
+      if (!raw) return { rating: 1000, games: 0 };
+
       if (typeof raw === "number") {
         return { rating: raw, games: 0 };
       }
 
-      return raw ?? { rating: 1000, games: 0 };
+      return {
+        rating: raw.rating ?? 1000,
+        games: raw.games ?? 0,
+      };
     };
 
     const w = getPlayer(winner);
     const l = getPlayer(loser);
 
     // -------------------------
-    // BEFORE RATINGS (IMPORTANT)
-    // -------------------------
-    const wBefore = w.rating;
-    const lBefore = l.rating;
-
-    // -------------------------
-    // ELO CALCULATION
+    // EXPECTED SCORE
     // -------------------------
     const expectedW =
       1 / (1 + Math.pow(10, (l.rating - w.rating) / 400));
 
+    // -------------------------
+    // K FACTOR (slightly dynamic)
+    // -------------------------
     const kWinner = 32 / (1 + w.games * 0.1);
     const kLoser = 32 / (1 + l.games * 0.1);
 
-    const wAfter = Math.round(
-      w.rating + kWinner * (1 - expectedW)
-    );
-
-    const lAfter = Math.round(
-      l.rating + kLoser * (0 - (1 - expectedW))
-    );
-
     // -------------------------
-    // DELTAS (THIS IS WHAT YOU NEED)
+    // ELO CHANGES (IMPORTANT FIX POINT)
     // -------------------------
-    const wDelta = wAfter - wBefore;
-    const lDelta = lAfter - lBefore;
+    const winnerChange = Math.round(kWinner * (1 - expectedW));
+    const loserChange = Math.round(kLoser * (0 - (1 - expectedW)));
+
+    const newWinnerRating = w.rating + winnerChange;
+    const newLoserRating = l.rating + loserChange;
 
     const updatedScores = {
       ...scores,
 
       [winner]: {
-        rating: wAfter,
+        rating: Math.round(newWinnerRating),
         games: w.games + 1,
       },
 
       [loser]: {
-        rating: lAfter,
+        rating: Math.round(newLoserRating),
         games: l.games + 1,
       },
     };
@@ -169,30 +164,34 @@ export async function POST(req: Request) {
     });
 
     // -------------------------
-    // MATCH LOG (NOW INCLUDES ELO CHANGE)
+    // MATCH LOG (FOR LIVE FEED / CASINO UI)
     // -------------------------
     await container.items.create({
       id: `match_${Date.now()}`,
       type: "match",
-
       winner,
       loser,
-
-      winnerBefore: wBefore,
-      loserBefore: lBefore,
-
-      winnerAfter: wAfter,
-      loserAfter: lAfter,
-
-      winnerDelta: wDelta,
-      loserDelta: lDelta,
-
       timestamp: Date.now(),
+      winnerChange,
+      loserChange,
+      winnerRatingAfter: Math.round(newWinnerRating),
+      loserRatingAfter: Math.round(newLoserRating),
     });
 
+    // -------------------------
+    // IMPORTANT: RETURN DELTAS
+    // -------------------------
     return NextResponse.json({
       ok: true,
       scores: updatedScores,
+      result: {
+        winner,
+        loser,
+        winnerChange,
+        loserChange,
+        winnerAfter: Math.round(newWinnerRating),
+        loserAfter: Math.round(newLoserRating),
+      },
     });
   } catch (err) {
     console.error("POST /scores failed:", err);
