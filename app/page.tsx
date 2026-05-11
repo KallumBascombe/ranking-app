@@ -362,7 +362,7 @@ export default function Home() {
   const favB = skill.favSide === "B";
 
   return (
-    <main className="min-h-screen bg-black text-white flex flex-col items-center px-4 py-10">
+    <main className="min-h-screen bg-black text-white flex flex-col items-center px-3 sm:px-4 py-4 sm:py-10 pb-28">
 
       {/* HEADER */}
       <div className="w-full max-w-4xl flex justify-between mb-8">
@@ -372,10 +372,10 @@ export default function Home() {
         </Link>
       </div>
 
-      <div className="w-full max-w-4xl flex gap-4">
+      <div className="w-full max-w-4xl flex flex-col md:flex-row gap-3 md:gap-4">
 
         {/* LEFT */}
-        <div className="w-1/3 space-y-4">
+        <div className="w-full md:w-1/3 space-y-4 min-w-0">
           <div className="bg-zinc-900 rounded-xl p-4">
             <h3 className="text-xs text-zinc-400 mb-2">🧠 ESPN Commentary</h3>
             <div className="space-y-2 text-sm">
@@ -388,7 +388,7 @@ export default function Home() {
         </div>
 
         {/* CENTER */}
-        <div className="w-1/3 bg-zinc-900 rounded-2xl p-6 space-y-6">
+        <div className="w-full md:w-1/3 space-y-4 min-w-0">
 
           <p className="text-zinc-400 text-sm">
             Pick who wins — live ELO battle system
@@ -399,9 +399,9 @@ export default function Home() {
           <button
             onClick={() => nextRound(currentPair[0])}
             disabled={isLoading}
-            className="w-full bg-zinc-800 p-6 rounded-xl text-left"
+            className="w-full bg-zinc-800 p-4 sm:p-6 rounded-xl text-left break-words overflow-hidden"
           >
-            <div className="text-xl font-bold flex gap-2 items-center">
+            <div className="text-xl font-bold flex flex-wrap gap-2 items-center break-words">
               {currentPair[0]}
               <span>{getRank(getRating(currentPair[0])).icon}</span>
             </div>
@@ -417,9 +417,9 @@ export default function Home() {
           <button
             onClick={() => nextRound(currentPair[1])}
             disabled={isLoading}
-            className="w-full bg-zinc-800 p-6 rounded-xl text-left"
+            className="w-full bg-zinc-800 p-4 sm:p-6 rounded-xl text-left break-words overflow-hidden"
           >
-            <div className="text-xl font-bold flex gap-2 items-center">
+            <div className="text-xl font-bold flex flex-wrap gap-2 items-center break-words">
               {currentPair[1]}
               <span>{getRank(getRating(currentPair[1])).icon}</span>
             </div>
@@ -436,7 +436,7 @@ export default function Home() {
         </div>
 
         {/* RIGHT */}
-        <div className="w-1/3 space-y-4">
+        <div className="w-full md:w-1/3 space-y-4 min-w-0">
 
           <div className="bg-zinc-900 rounded-xl p-4 text-xs space-y-2">
             <div className="font-bold mb-2">Rank Legend</div>
