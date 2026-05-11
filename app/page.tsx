@@ -77,13 +77,12 @@ const people = [
 type Match = {
   winner: string;
   loser: string;
-  time: number;
+  timestamp: number;
 };
 
 type Snapshot = {
   prevScores: Record<string, number>;
   prevPair: [string, string];
-  prevHistory: Match[];
 };
 
 // -------------------------
@@ -102,14 +101,36 @@ export default function Home() {
   // -------------------------
   const loadScores = useCallback(async () => {
     try {
-      const res = await fetch("/api/scores", { cache: "no-store" });
+      const res = await fetch("/api/scores", {
+        cache: "no-store",
+      });
+
       const data = await res.json();
 
       if (data && typeof data === "object") {
         setScores(data);
       }
     } catch (err) {
-      console.error("Load error:", err);
+      console.error("Load scores error:", err);
+    }
+  }, []);
+
+  // -------------------------
+  // LOAD SHARED MATCH HISTORY
+  // -------------------------
+  const loadHistory = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/matches?t=${Date.now()}`, {
+        cache: "no-store",
+      });
+
+      const data = await res.json();
+
+      if (Array.isArray(data)) {
+        setHistory(data);
+      }
+    } catch (err) {
+      console.error("Load history error:", err);
     }
   }, []);
 
@@ -119,7 +140,9 @@ export default function Home() {
   const getRandomPair = useCallback((): [string, string] => {
     const a = people[Math.floor(Math.random() * people.length)];
     const b = people[Math.floor(Math.random() * people.length)];
+
     if (a === b) return getRandomPair();
+
     return [a, b];
   }, []);
 
@@ -129,7 +152,9 @@ export default function Home() {
   const updateScores = async (winner: string, loser: string) => {
     const res = await fetch("/api/scores", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify({ winner, loser }),
     });
 
@@ -138,6 +163,8 @@ export default function Home() {
     if (data?.scores) {
       setScores(data.scores);
     }
+
+    await loadHistory();
   };
 
   // -------------------------
@@ -152,17 +179,10 @@ export default function Home() {
     const winner = chosen;
     const loser = chosen === a ? b : a;
 
-    // 🔥 FULL SNAPSHOT (this is what makes undo correct)
     lastVoteRef.current = {
       prevScores: scores,
       prevPair: currentPair,
-      prevHistory: history,
     };
-
-    setHistory((h) => [
-      { winner, loser, time: Date.now() },
-      ...h.slice(0, 9),
-    ]);
 
     await updateScores(winner, loser);
 
@@ -182,7 +202,6 @@ export default function Home() {
 
     setScores(snapshot.prevScores);
     setCurrentPair(snapshot.prevPair);
-    setHistory(snapshot.prevHistory);
 
     lastVoteRef.current = null;
   };
@@ -192,7 +211,14 @@ export default function Home() {
   // -------------------------
   useEffect(() => {
     loadScores();
-  }, [loadScores]);
+    loadHistory();
+
+    const interval = setInterval(() => {
+      loadHistory();
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [loadScores, loadHistory]);
 
   useEffect(() => {
     if (Object.keys(scores).length > 0 && currentPair[0] === "") {
@@ -205,7 +231,6 @@ export default function Home() {
   // -------------------------
   return (
     <main className="min-h-screen bg-gray-100 flex flex-col items-center px-4 py-10">
-
       {/* HEADER */}
       <div className="w-full max-w-2xl flex justify-between items-center mb-10">
         <h1 className="text-3xl font-bold">
@@ -222,12 +247,10 @@ export default function Home() {
 
       {/* GAME CARD */}
       <div className="w-full max-w-2xl bg-white rounded-2xl shadow-lg p-8 flex flex-col items-center gap-8">
-
         <p className="text-gray-500 text-sm">
           Please choose the better poker player based on their overall skill
         </p>
 
-        {/* OPTION A */}
         <button
           onClick={() => nextRound(currentPair[0])}
           disabled={isLoading}
@@ -240,7 +263,6 @@ export default function Home() {
           VS
         </div>
 
-        {/* OPTION B */}
         <button
           onClick={() => nextRound(currentPair[1])}
           disabled={isLoading}
@@ -255,7 +277,6 @@ export default function Home() {
           </p>
         )}
 
-        {/* ACTIONS */}
         <div className="flex gap-6 mt-2">
           <button
             onClick={undoLastVote}
@@ -266,15 +287,17 @@ export default function Home() {
         </div>
       </div>
 
-      {/* HISTORY */}
+      {/* RECENT MATCHES */}
       <div className="w-full max-w-2xl mt-10">
         <h3 className="text-sm font-semibold text-gray-700 mb-3">
-          Recent matches
+          Live recent matches
         </h3>
 
         <div className="bg-white rounded-xl shadow p-4 space-y-2">
           {history.length === 0 && (
-            <p className="text-sm text-gray-400">No matches yet</p>
+            <p className="text-sm text-gray-400">
+              No matches yet
+            </p>
           )}
 
           {history.map((m, i) => (
@@ -285,12 +308,14 @@ export default function Home() {
               <span>
                 <b>{m.winner}</b> beat {m.loser}
               </span>
-              <span>{new Date(m.time).toLocaleTimeString()}</span>
+
+              <span>
+                {new Date(m.timestamp).toLocaleTimeString()}
+              </span>
             </div>
           ))}
         </div>
       </div>
-
     </main>
   );
 }
