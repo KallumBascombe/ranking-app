@@ -2,57 +2,67 @@ import { NextResponse } from "next/server";
 import { CosmosClient } from "@azure/cosmos";
 
 // -------------------------
-// SAFE LAZY CLIENT INIT
+// SAFE CLIENT INIT
 // -------------------------
-function getClient() {
+function getContainer() {
   const connectionString = process.env.COSMOS_CONNECTION_STRING;
 
   if (!connectionString) {
     throw new Error("Missing COSMOS_CONNECTION_STRING env variable");
   }
 
-  return new CosmosClient(connectionString);
-}
-
-function getContainer() {
-  const client = getClient();
+  const client = new CosmosClient(connectionString);
   const db = client.database("game");
   return db.container("scores");
 }
 
 // -------------------------
-// GET leaderboard
+// LOAD LEADERBOARD (SAFE QUERY)
 // -------------------------
 export async function GET() {
   try {
     const container = getContainer();
 
-    const { resource } = await container
-      .item("leaderboard", "leaderboard")
-      .read();
+    const { resources } = await container.items
+      .query({
+        query: "SELECT * FROM c WHERE c.id = @id",
+        parameters: [{ name: "@id", value: "leaderboard" }],
+      })
+      .fetchAll();
 
-    return NextResponse.json(resource?.scores ?? {});
+    const leaderboard = resources?.[0];
+
+    return NextResponse.json(leaderboard?.scores ?? {});
   } catch (err) {
     console.error("GET /scores failed:", err);
     return NextResponse.json({});
   }
 }
 
-// ------------------------
-// POST vote (winner/loser)
-// ------------------------
+// -------------------------
+// UPDATE SCORES + SAVE MATCH
+// -------------------------
 export async function POST(req: Request) {
   try {
     const container = getContainer();
-
     const { winner, loser } = await req.json();
 
-    const leaderboardItem = await container
-      .item("leaderboard", "leaderboard")
-      .read();
+    // -------------------------
+    // LOAD CURRENT LEADERBOARD
+    // -------------------------
+    const { resources } = await container.items
+      .query({
+        query: "SELECT * FROM c WHERE c.id = @id",
+        parameters: [{ name: "@id", value: "leaderboard" }],
+      })
+      .fetchAll();
 
-    const scores = leaderboardItem.resource?.scores || {};
+    const leaderboard = resources?.[0];
+    const scores = leaderboard?.scores || {};
 
+    // -------------------------
+    // ELO CALCULATION
+    // -------------------------
     const K = 32;
 
     const w = scores[winner] ?? 1000;
@@ -66,7 +76,9 @@ export async function POST(req: Request) {
       [loser]: Math.round(l + K * (0 - (1 - expectedW))),
     };
 
-    // WRITE leaderboard
+    // -------------------------
+    // UPSERT LEADERBOARD (FIXED)
+    // -------------------------
     await container.items.upsert({
       id: "leaderboard",
       type: "leaderboard",
@@ -74,7 +86,9 @@ export async function POST(req: Request) {
       updatedAt: Date.now(),
     });
 
-    // WRITE match history
+    // -------------------------
+    // STORE MATCH HISTORY
+    // -------------------------
     await container.items.create({
       id: `match_${Date.now()}`,
       type: "match",
@@ -83,7 +97,10 @@ export async function POST(req: Request) {
       timestamp: Date.now(),
     });
 
-    return NextResponse.json({ ok: true, scores: updatedScores });
+    return NextResponse.json({
+      ok: true,
+      scores: updatedScores,
+    });
   } catch (err) {
     console.error("POST /scores failed:", err);
     return NextResponse.json(
