@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 
 // -------------------------
 // PEOPLE LIST
@@ -87,6 +87,17 @@ type Match = {
 };
 
 // -------------------------
+// HELPERS
+// -------------------------
+const formatTime = (ts: number) => {
+  const d = new Date(ts);
+  return d.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
+// -------------------------
 // BADGES
 // -------------------------
 const getBadge = (player: Player) => {
@@ -96,15 +107,15 @@ const getBadge = (player: Player) => {
 };
 
 // -------------------------
-// STREAK DISPLAY
+// STREAK
 // -------------------------
 const StreakIndicator = ({ streak = 0 }: { streak?: number }) => {
   if (!streak || streak < 3) return null;
 
   const color =
-    streak >= 10 ? "bg-red-500"
-    : streak >= 6 ? "bg-orange-500"
-    : "bg-yellow-500";
+    streak >= 10 ? "bg-red-500" :
+    streak >= 6 ? "bg-orange-500" :
+    "bg-yellow-500";
 
   return (
     <div className="flex items-center gap-1 mt-2">
@@ -119,10 +130,22 @@ const StreakIndicator = ({ streak = 0 }: { streak?: number }) => {
 };
 
 // -------------------------
-// VERBS
+// COMMENTARY
 // -------------------------
-const verbs = ["crushed", "destroyed", "obliterated", "ruined", "demolished"];
-const getVerb = () => verbs[Math.floor(Math.random() * verbs.length)];
+const pick = <T,>(arr: T[]) =>
+  arr[Math.floor(Math.random() * arr.length)];
+
+const commentaryLines = (winner: string, loser: string, upset: boolean) => [
+  upset
+    ? `🚨 UPSET ALERT: ${winner} shocks ${loser}`
+    : `🔥 ${winner} takes down ${loser}`,
+
+  `${winner} showing strong form tonight`,
+
+  `Momentum shifts after that result`,
+
+  `${loser} needs a comeback`
+];
 
 // -------------------------
 // MAIN
@@ -133,11 +156,12 @@ export default function Home() {
   const [history, setHistory] = useState<Match[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [lastDelta, setLastDelta] = useState<number | null>(null);
+  const [commentaryFeed, setCommentaryFeed] = useState<string[]>([]);
 
   const mountedRef = useRef(true);
 
   // -------------------------
-  // LOAD SCORES
+  // LOAD
   // -------------------------
   const loadScores = useCallback(async () => {
     const res = await fetch("/api/scores", { cache: "no-store" });
@@ -145,13 +169,13 @@ export default function Home() {
     if (mountedRef.current) setScores(data || {});
   }, []);
 
-  // -------------------------
-  // LOAD HISTORY
-  // -------------------------
   const loadHistory = useCallback(async () => {
     const res = await fetch(`/api/matches?t=${Date.now()}`);
     const data = await res.json();
-    if (mountedRef.current && Array.isArray(data)) setHistory(data);
+
+    if (mountedRef.current && Array.isArray(data)) {
+      setHistory(data.slice(-30).reverse());
+    }
   }, []);
 
   // -------------------------
@@ -173,6 +197,30 @@ export default function Home() {
 
     return [a, b];
   };
+
+  // -------------------------
+  // BIGGEST UPSET
+  // -------------------------
+  const biggestUpset = useMemo(() => {
+    if (!history.length) return null;
+
+    let best: Match | null = null;
+    let maxDiff = 0;
+
+    for (const m of history) {
+      const w = scores[m.winner]?.rating ?? 1000;
+      const l = scores[m.loser]?.rating ?? 1000;
+
+      const diff = l - w;
+
+      if (diff > maxDiff) {
+        maxDiff = diff;
+        best = m;
+      }
+    }
+
+    return best;
+  }, [history, scores]);
 
   // -------------------------
   // UPDATE SCORES
@@ -199,13 +247,27 @@ export default function Home() {
     const winner = chosen;
     const loser = chosen === a ? b : a;
 
-    const next = getPair();
-    setCurrentPair(next);
+    const wRating = getRating(winner);
+    const lRating = getRating(loser);
+    const upset = wRating < lRating;
+
+    setCurrentPair(getPair());
 
     try {
       const data = await updateScores(winner, loser);
 
       setLastDelta(data?.result?.winnerChange ?? null);
+
+      const lines = commentaryLines(winner, loser, upset);
+
+      setCommentaryFeed(prev => [
+        `${new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        })} — ${pick(lines)}`,
+        ...prev
+      ].slice(0, 6));
+
       await loadHistory();
     } finally {
       setIsLoading(false);
@@ -222,7 +284,8 @@ export default function Home() {
     loadScores();
     loadHistory();
 
-    const interval = setInterval(loadHistory, 4000);
+    const interval = setInterval(loadHistory, 8000);
+
     return () => {
       mountedRef.current = false;
       clearInterval(interval);
@@ -241,7 +304,8 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-black text-white flex flex-col items-center px-4 py-10">
 
-      <div className="w-full max-w-2xl flex justify-between mb-8">
+      {/* HEADER */}
+      <div className="w-full max-w-4xl flex justify-between mb-8">
         <h1 className="text-2xl font-bold">🎰 Poker Arena</h1>
 
         <Link href="/leaderboard" className="bg-purple-600 px-4 py-2 rounded-lg">
@@ -249,68 +313,88 @@ export default function Home() {
         </Link>
       </div>
 
-      <div className="w-full max-w-2xl bg-zinc-900 rounded-2xl p-6 space-y-6">
+      {/* TOP ROW */}
+      <div className="w-full max-w-4xl flex gap-4">
 
-        <p className="text-zinc-400 text-sm">
-          Pick who wins — live ELO battle system
-        </p>
+        {/* LEFT */}
+        <div className="w-1/3 space-y-4">
 
-        {/* A */}
-        <button
-          onClick={() => nextRound(currentPair[0])}
-          disabled={isLoading}
-          className="w-full bg-zinc-800 p-6 rounded-xl text-left"
-        >
-          <div className="text-xl font-bold">
-            {currentPair[0]}{" "}
-            <span className="text-xs text-zinc-400">
-              {getBadge(getPlayer(currentPair[0]))}
-            </span>
+          {biggestUpset && (
+            <div className="bg-red-950 border border-red-600 rounded-xl p-4">
+              <div className="text-xs text-red-300 mb-1">😭 Biggest Upset 😭</div>
+              <div className="text-white font-bold text-sm">
+                {biggestUpset.winner} shocked {biggestUpset.loser}
+              </div>
+            </div>
+          )}
+
+          <div className="bg-zinc-900 rounded-xl p-4">
+            <h3 className="text-xs text-zinc-400 mb-2">🧠 Commentary</h3>
+
+            {commentaryFeed.length === 0 ? (
+              <p className="text-zinc-500 text-sm">Waiting for action...</p>
+            ) : (
+              <div className="space-y-2 text-sm">
+                {commentaryFeed.map((c, i) => (
+                  <div key={i}>{c}</div>
+                ))}
+              </div>
+            )}
           </div>
+        </div>
 
-          <div className="text-sm text-zinc-400">
-            ELO: {getRating(currentPair[0])}
-          </div>
+        {/* GAME */}
+        <div className="w-2/3 bg-zinc-900 rounded-2xl p-6 space-y-6">
 
-          <StreakIndicator streak={getPlayer(currentPair[0]).streak} />
-        </button>
+          <p className="text-zinc-400 text-sm">
+            Pick who wins — live ELO battle system
+          </p>
 
-        <div className="text-center text-zinc-500">VS</div>
+          <button
+            onClick={() => nextRound(currentPair[0])}
+            disabled={isLoading}
+            className="w-full bg-zinc-800 p-6 rounded-xl text-left"
+          >
+            <div className="text-xl font-bold">{currentPair[0]}</div>
+            <div className="text-sm text-zinc-400">
+              ELO: {getRating(currentPair[0])}
+            </div>
+          </button>
 
-        {/* B */}
-        <button
-          onClick={() => nextRound(currentPair[1])}
-          disabled={isLoading}
-          className="w-full bg-zinc-800 p-6 rounded-xl text-left"
-        >
-          <div className="text-xl font-bold">
-            {currentPair[1]}{" "}
-            <span className="text-xs text-zinc-400">
-              {getBadge(getPlayer(currentPair[1]))}
-            </span>
-          </div>
+          <div className="text-center text-zinc-500">VS</div>
 
-          <div className="text-sm text-zinc-400">
-            ELO: {getRating(currentPair[1])}
-          </div>
+          <button
+            onClick={() => nextRound(currentPair[1])}
+            disabled={isLoading}
+            className="w-full bg-zinc-800 p-6 rounded-xl text-left"
+          >
+            <div className="text-xl font-bold">{currentPair[1]}</div>
+            <div className="text-sm text-zinc-400">
+              ELO: {getRating(currentPair[1])}
+            </div>
+          </button>
 
-          <StreakIndicator streak={getPlayer(currentPair[1]).streak} />
-        </button>
-
-        {lastDelta !== null && (
-          <div className="text-green-400 text-sm animate-pulse">
-            +{lastDelta} ELO gained 🔥
-          </div>
-        )}
+          {lastDelta !== null && (
+            <div className="text-green-400 text-sm animate-pulse">
+              +{lastDelta} ELO gained 🔥
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="w-full max-w-2xl mt-8">
-        <h3 className="text-sm text-zinc-400 mb-2">Live arena feed</h3>
+      {/* MATCH FEED WITH TIMESTAMPS */}
+      <div className="w-full max-w-4xl mt-8">
+        <h3 className="text-sm text-zinc-400 mb-2">📊 Live Match Feed</h3>
 
         <div className="bg-zinc-900 rounded-xl p-4 space-y-2">
           {history.map((m, i) => (
-            <div key={i} className="text-sm text-zinc-300">
-              🔥 <b>{m.winner}</b> {getVerb()} {m.loser}
+            <div key={i} className="text-sm text-zinc-300 flex justify-between">
+              <span>
+                🔥 <b>{m.winner}</b> defeats {m.loser}
+              </span>
+              <span className="text-zinc-500 text-xs">
+                {formatTime(m.timestamp)}
+              </span>
             </div>
           ))}
         </div>
