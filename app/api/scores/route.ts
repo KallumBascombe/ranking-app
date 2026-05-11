@@ -1,61 +1,78 @@
 import { NextResponse } from "next/server";
 import { CosmosClient } from "@azure/cosmos";
 
-const DOC_ID = "leaderboard";
+const connectionString = process.env.COSMOS_CONNECTION_STRING;
 
-function getContainer() {
-  const client = new CosmosClient({
-    endpoint: process.env.COSMOS_ENDPOINT!,
-    key: process.env.COSMOS_KEY!,
-  });
-
-  return client
-    .database(process.env.COSMOS_DB!)
-    .container(process.env.COSMOS_CONTAINER!);
+if (!connectionString) {
+  throw new Error("Missing COSMOS_CONNECTION_STRING env variable");
 }
 
+const client = new CosmosClient(connectionString);
+
+const db = client.database("game");
+const container = db.container("scores");
+
 // -------------------------
-// GET SCORES
+// GET leaderboard
 // -------------------------
 export async function GET() {
   try {
-    const container = getContainer();
-
     const { resource } = await container
-      .item(DOC_ID, DOC_ID)
+      .item("leaderboard", "leaderboard")
       .read();
 
     return NextResponse.json(resource?.scores ?? {});
-  } catch (err: any) {
-    console.error("GET ERROR:", err.message);
-
+  } catch (err) {
+    console.error("GET /scores failed:", err);
     return NextResponse.json({});
   }
 }
 
 // -------------------------
-// SAVE SCORES
+// POST vote (winner/loser)
 // -------------------------
 export async function POST(req: Request) {
-  try {
-    const body = await req.json();
+  const { winner, loser } = await req.json();
 
-    const container = getContainer();
+  const leaderboardItem = await container
+    .item("leaderboard", "leaderboard")
+    .read();
 
-    await container.items.upsert({
-      id: DOC_ID,
-      scores: body,
-    });
+  const scores = leaderboardItem.resource?.scores || {};
 
-    console.log("✅ COSMOS WRITE SUCCESS");
+  const K = 32;
 
-    return NextResponse.json({ ok: true });
-  } catch (err: any) {
-    console.error("❌ COSMOS ERROR:", err.message);
+  const w = scores[winner] ?? 1000;
+  const l = scores[loser] ?? 1000;
 
-    return NextResponse.json(
-      { error: err.message },
-      { status: 500 }
-    );
-  }
+  const expectedW = 1 / (1 + Math.pow(10, (l - w) / 400));
+
+  const updatedScores = {
+    ...scores,
+    [winner]: Math.round(w + K * (1 - expectedW)),
+    [loser]: Math.round(l + K * (0 - (1 - expectedW))),
+  };
+
+  // -------------------------
+  // WRITE leaderboard
+  // -------------------------
+  await container.items.upsert({
+    id: "leaderboard",
+    type: "leaderboard",
+    scores: updatedScores,
+    updatedAt: Date.now(),
+  });
+
+  // -------------------------
+  // WRITE match history
+  // -------------------------
+  await container.items.create({
+    id: `match_${Date.now()}`,
+    type: "match",
+    winner,
+    loser,
+    timestamp: Date.now(),
+  });
+
+  return NextResponse.json({ ok: true, scores: updatedScores });
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 // -------------------------
 // PEOPLE LIST
@@ -72,12 +72,12 @@ const people = [
 ];
 
 // -------------------------
-// DEFAULT SAFE SCORES
+// TYPES
 // -------------------------
-const createInitialScores = () => {
-  const obj: Record<string, number> = {};
-  people.forEach((p) => (obj[p] = 1000));
-  return obj;
+type Match = {
+  winner: string;
+  loser: string;
+  time: number;
 };
 
 // -------------------------
@@ -85,157 +85,110 @@ const createInitialScores = () => {
 // -------------------------
 export default function Home() {
   const [currentPair, setCurrentPair] = useState<[string, string]>(["", ""]);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [lastPair, setLastPair] = useState("");
-  const [scores, setScores] = useState<Record<string, number>>(createInitialScores());
+  const [scores, setScores] = useState<Record<string, number>>({});
   const [isLoading, setIsLoading] = useState(false);
+  const [history, setHistory] = useState<Match[]>([]);
+
+  const lastVoteRef = useRef<null | {
+    prevScores: Record<string, number>;
+  }>(null);
 
   // -------------------------
-  // LOAD SCORES (ROBUST)
+  // LOAD SCORES (Cosmos is source of truth)
   // -------------------------
   const loadScores = useCallback(async () => {
     try {
       const res = await fetch("/api/scores", { cache: "no-store" });
       const data = await res.json();
 
-      console.log("📥 RAW SCORES FROM API:", data);
-
-      if (!data || typeof data !== "object") return;
-
-      const clean: Record<string, number> = {};
-
-      for (const name of people) {
-        const value = Number(data[name]);
-
-        clean[name] = !isNaN(value) ? value : 1000;
+      if (data && typeof data === "object") {
+        setScores(data);
       }
-
-      setScores(clean);
     } catch (err) {
       console.error("Load error:", err);
     }
   }, []);
 
   // -------------------------
-  // SAVE SCORES (SAFE)
+  // RANDOM PAIR
   // -------------------------
-  const saveScores = useCallback(async (updated: Record<string, number>) => {
-    const safe: Record<string, number> = {};
-
-    for (const name of people) {
-      const v = Number(updated[name]);
-      safe[name] = !isNaN(v) ? v : 1000;
-    }
-
-    console.log("📤 SAVING SCORES:", safe);
-
-    await fetch("/api/scores", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(safe),
-    });
+  const getRandomPair = useCallback((): [string, string] => {
+    const a = people[Math.floor(Math.random() * people.length)];
+    const b = people[Math.floor(Math.random() * people.length)];
+    if (a === b) return getRandomPair();
+    return [a, b];
   }, []);
 
   // -------------------------
-  // POLLING
+  // UPDATE SCORES (SERVER AUTHORITY)
   // -------------------------
-useEffect(() => {
-  loadScores();
-
-  const onFocus = () => loadScores();
-
-  window.addEventListener("focus", onFocus);
-
-  const interval = setInterval(loadScores, 8000);
-
-  return () => {
-    window.removeEventListener("focus", onFocus);
-    clearInterval(interval);
-  };
-}, [loadScores]);
-
-  // -------------------------
-  // PAIR GENERATION
-  // -------------------------
-  const getRandomPair = useCallback((): [string, string] => {
-    let a = "";
-    let b = "";
-    let key = "";
-
-    do {
-      a = people[Math.floor(Math.random() * people.length)];
-
-      const scoreA = scores[a] ?? 1000;
-
-      const candidates = people
-        .filter((p) => p !== a)
-        .map((p) => ({
-          name: p,
-          diff: Math.abs((scores[p] ?? 1000) - scoreA),
-        }))
-        .sort((x, y) => x.diff - y.diff)
-        .slice(0, 3);
-
-      b = candidates[Math.floor(Math.random() * candidates.length)].name;
-
-      key = [a, b].sort().join("-");
-    } while (key === lastPair);
-
-    return [a, b];
-  }, [scores, lastPair]);
-
-  // -------------------------
-  // UPDATE SCORES
-  // -------------------------
-  const updateScores = (winner: string, loser: string) => {
-    setScores((prev) => {
-      const K = 32;
-
-      const w = prev[winner] ?? 1000;
-      const l = prev[loser] ?? 1000;
-
-      const expectedW = 1 / (1 + Math.pow(10, (l - w) / 400));
-      const expectedL = 1 - expectedW;
-
-      const updated = {
-        ...prev,
-        [winner]: Math.round(w + K * (1 - expectedW)),
-        [loser]: Math.round(l + K * (0 - expectedL)),
-      };
-
-      saveScores(updated);
-
-      return updated;
+  const updateScores = async (winner: string, loser: string) => {
+    const res = await fetch("/api/scores", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ winner, loser }),
     });
+
+    const data = await res.json();
+
+    if (data?.scores) {
+      setScores(data.scores);
+    }
   };
 
   // -------------------------
-  // GAME FLOW
+  // NEXT ROUND
   // -------------------------
-  const nextRound = (chosen: string) => {
+  const nextRound = async (chosen: string) => {
     if (isLoading) return;
 
     setIsLoading(true);
 
     const [a, b] = currentPair;
-
     const winner = chosen;
     const loser = chosen === a ? b : a;
 
-    updateScores(winner, loser);
-    setLastPair([a, b].sort().join("-"));
+    // store undo snapshot locally (still useful UX)
+    lastVoteRef.current = { prevScores: scores };
+
+    setHistory((h) => [
+      { winner, loser, time: Date.now() },
+      ...h.slice(0, 9),
+    ]);
+
+    await updateScores(winner, loser);
 
     setTimeout(() => {
       setCurrentPair(getRandomPair());
       setIsLoading(false);
-    }, 200);
+    }, 150);
+  };
+
+  // -------------------------
+  // UNDO (frontend rollback only)
+  // -------------------------
+  const undoLastVote = async () => {
+    if (!lastVoteRef.current) return;
+
+    const { prevScores } = lastVoteRef.current;
+
+    setScores(prevScores);
+
+    // NOTE: not persisting undo yet (we'll upgrade in next step if you want)
+    lastVoteRef.current = null;
+
+    setHistory((h) => h.slice(1));
   };
 
   // -------------------------
   // INIT
   // -------------------------
   useEffect(() => {
-    if (Object.keys(scores).length && !currentPair[0]) {
+    loadScores();
+  }, [loadScores]);
+
+  useEffect(() => {
+    if (Object.keys(scores).length > 0 && currentPair[0] === "") {
       setCurrentPair(getRandomPair());
     }
   }, [scores, currentPair, getRandomPair]);
@@ -244,58 +197,77 @@ useEffect(() => {
   // UI
   // -------------------------
   return (
-    <main className="relative min-h-screen flex flex-col items-center justify-center p-6 bg-gray-50">
+    <main className="min-h-screen flex flex-col items-center justify-center p-6 bg-gray-50">
 
-      <h1 className="text-2xl font-bold mb-10 text-gray-800">
+      <h1 className="text-2xl font-bold mb-6">
         Who ranks higher?
       </h1>
 
-      <div className="absolute top-4 right-4">
-        <button
-          onClick={() => setMenuOpen(!menuOpen)}
-          className="text-2xl font-bold"
-        >
-          ☰
-        </button>
+      <div className="w-full max-w-md flex flex-col gap-6 items-center">
 
-        {menuOpen && (
-          <div className="absolute right-0 mt-2 w-48 bg-white border rounded-lg shadow-lg p-3 z-50">
-            <Link
-              href="/leaderboard"
-              className="block py-2 hover:text-blue-600"
-              onClick={() => setMenuOpen(false)}
-            >
-              View Leaderboard
-            </Link>
-          </div>
-        )}
-      </div>
-
-      <div className="w-full max-w-md flex flex-col gap-6">
-
-        {isLoading && (
-          <div className="text-sm text-blue-500 text-center">
-            Calculating result...
-          </div>
-        )}
+        <h2 className="text-sm text-gray-500">
+          Pick who ranks higher
+        </h2>
 
         <button
           onClick={() => nextRound(currentPair[0])}
           disabled={isLoading}
-          className="w-full p-6 bg-white border rounded-xl shadow-sm text-lg font-medium"
+          className="w-full py-10 px-6 bg-white border rounded-2xl shadow-sm text-2xl font-semibold hover:shadow-lg active:scale-[0.98] transition"
         >
           {currentPair[0]}
         </button>
 
+        <div className="text-gray-400 font-medium">VS</div>
+
         <button
           onClick={() => nextRound(currentPair[1])}
           disabled={isLoading}
-          className="w-full p-6 bg-white border rounded-xl shadow-sm text-lg font-medium"
+          className="w-full py-10 px-6 bg-white border rounded-2xl shadow-sm text-2xl font-semibold hover:shadow-lg active:scale-[0.98] transition"
         >
           {currentPair[1]}
         </button>
 
+        {isLoading && (
+          <div className="text-sm text-blue-500 animate-pulse">
+            Updating rankings...
+          </div>
+        )}
+
+        <div className="flex gap-4">
+          <button
+            onClick={undoLastVote}
+            className="text-sm text-gray-600 underline"
+          >
+            Undo
+          </button>
+
+          <Link href="/leaderboard" className="text-sm text-blue-600 underline">
+            Leaderboard
+          </Link>
+        </div>
       </div>
+
+      <div className="w-full max-w-md mt-10">
+        <h3 className="text-sm font-semibold text-gray-700 mb-2">
+          Recent matches
+        </h3>
+
+        <div className="bg-white border rounded-xl p-3 space-y-2">
+          {history.length === 0 && (
+            <p className="text-sm text-gray-400">No matches yet</p>
+          )}
+
+          {history.map((m, i) => (
+            <div key={i} className="text-sm flex justify-between text-gray-600">
+              <span>
+                <b>{m.winner}</b> beat {m.loser}
+              </span>
+              <span>{new Date(m.time).toLocaleTimeString()}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
     </main>
   );
 }
