@@ -254,14 +254,14 @@ export default function Home() {
   }, [history, scores]);
 
   // -------------------------
-  // FIXED STREAK SYSTEM (CORRECT ORDER)
+  // 🔥 FIXED STREAK (ALWAYS ACTIVE)
   // -------------------------
   const streakData = useMemo(() => {
     if (!history.length) return null;
 
     const streaks: Record<string, number> = {};
 
-    // IMPORTANT: oldest → newest (correct logic)
+    // correct chronological processing
     const chronological = [...history].reverse();
 
     for (const m of chronological) {
@@ -279,12 +279,9 @@ export default function Home() {
       }
     }
 
-    if (topStreak < 2) return null;
-
-    return {
-      player: topPlayer,
-      streak: topStreak,
-    };
+    return topStreak >= 2
+      ? { player: topPlayer, streak: topStreak }
+      : null;
   }, [history]);
 
   const updateScores = async (winner: string, loser: string) => {
@@ -367,6 +364,7 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-black text-white flex flex-col items-center px-4 py-10">
 
+      {/* HEADER */}
       <div className="w-full max-w-4xl flex justify-between mb-8">
         <h1 className="text-2xl font-bold">🎰 Swindon Poker Arena</h1>
         <Link href="/leaderboard" className="bg-purple-600 px-4 py-2 rounded-lg">
@@ -376,33 +374,27 @@ export default function Home() {
 
       <div className="w-full max-w-4xl flex gap-4">
 
+        {/* LEFT */}
         <div className="w-1/3 space-y-4">
           <div className="bg-zinc-900 rounded-xl p-4">
             <h3 className="text-xs text-zinc-400 mb-2">🧠 ESPN Commentary</h3>
-
-            {commentaryFeed.length === 0 ? (
-              <p className="text-zinc-500 text-sm">Waiting for action...</p>
-            ) : (
-              <div className="space-y-2 text-sm">
-                {commentaryFeed.map((c, i) => (
-                  <div key={i}>{c}</div>
-                ))}
-              </div>
-            )}
+            <div className="space-y-2 text-sm">
+              {commentaryFeed.length === 0
+                ? <p className="text-zinc-500 text-sm">Waiting for action...</p>
+                : commentaryFeed.map((c, i) => <div key={i}>{c}</div>)
+              }
+            </div>
           </div>
         </div>
 
+        {/* CENTER */}
         <div className="w-1/3 bg-zinc-900 rounded-2xl p-6 space-y-6">
 
           <p className="text-zinc-400 text-sm">
             Pick who wins — live ELO battle system
           </p>
 
-          {favA && (
-            <div className="text-center text-[10px] text-zinc-400">
-              {skill.label}
-            </div>
-          )}
+          {favA && <div className="text-center text-[10px] text-zinc-400">{skill.label}</div>}
 
           <button
             onClick={() => nextRound(currentPair[0])}
@@ -420,11 +412,7 @@ export default function Home() {
 
           <div className="text-center text-zinc-500">VS</div>
 
-          {favB && (
-            <div className="text-center text-[10px] text-zinc-400">
-              {skill.label}
-            </div>
-          )}
+          {favB && <div className="text-center text-[10px] text-zinc-400">{skill.label}</div>}
 
           <button
             onClick={() => nextRound(currentPair[1])}
@@ -441,12 +429,13 @@ export default function Home() {
           </button>
 
           {lastDelta !== null && (
-            <div className="text-green-400 text-sm animate-pulse mt-2">
+            <div className="text-green-400 text-sm animate-pulse">
               +{lastDelta} ELO gained 🔥
             </div>
           )}
         </div>
 
+        {/* RIGHT */}
         <div className="w-1/3 space-y-4">
 
           <div className="bg-zinc-900 rounded-xl p-4 text-xs space-y-2">
@@ -462,22 +451,16 @@ export default function Home() {
             <div className="bg-zinc-900 rounded-xl p-4 text-xs space-y-2">
               <div className="font-bold mb-2">🏛 Biggest Upset</div>
               <div>
-                😭 <b>{hallOfFame.biggestUpset?.winner}</b> vs{" "}
-                {hallOfFame.biggestUpset?.loser}
+                😭 <b>{hallOfFame.biggestUpset?.winner}</b> vs {hallOfFame.biggestUpset?.loser}
               </div>
             </div>
           )}
 
           {streakData && (
-            <div className="bg-red-600/20 border border-red-500 rounded-xl p-4 text-xs space-y-1">
-              <div className="font-bold text-red-400">
-                🔥 Streak Leader
-              </div>
+            <div className="bg-red-600/20 border border-red-500 rounded-xl p-4 text-xs">
+              <div className="font-bold text-red-400">🔥 Streak Leader</div>
               <div>
-                <b>{streakData.player}</b> —{" "}
-                <span className="text-red-300 font-bold">
-                  {streakData.streak} wins
-                </span>
+                <b>{streakData.player}</b> — {streakData.streak} wins
               </div>
             </div>
           )}
@@ -485,22 +468,24 @@ export default function Home() {
         </div>
       </div>
 
+      {/* FEED */}
       <div className="w-full max-w-4xl mt-8">
         <h3 className="text-sm text-zinc-400 mb-2">📊 Live Match Feed</h3>
-
         <div className="bg-zinc-900 rounded-xl p-4 space-y-2">
           {history.map((m, i) => (
             <div key={i} className="flex justify-between text-sm text-zinc-300">
               <span>
                 {getRank(getRating(m.winner)).icon} <b>{m.winner}</b> defeats {m.loser}
               </span>
-              <span className="text-zinc-500 text-xs">
-                {formatTime(m.timestamp)}
-              </span>
+              <span className="text-zinc-500 text-xs">{formatTime(m.timestamp)}</span>
             </div>
           ))}
         </div>
       </div>
+      {/* FOOTER */}
+<div className="fixed bottom-0 left-0 w-full bg-black/80 text-white text-sm text-center py-3">
+  Swindon Poker Arena — Created by Kallum Bascombe. If you have any suggestions or want to contribute please send me a WhatsApp message. 
+</div>
 
     </main>
   );
