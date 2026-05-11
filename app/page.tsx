@@ -109,7 +109,7 @@ const getRank = (rating: number) => {
 };
 
 // -------------------------
-// SKILL MATCH (CLEAN)
+// SKILL MATCH
 // -------------------------
 const getSkillMatch = (aRating: number, bRating: number) => {
   const diff = aRating - bRating;
@@ -231,7 +231,7 @@ export default function Home() {
   };
 
   // -------------------------
-  // HALL OF FAME (BIGGEST UPSET ONLY)
+  // BIGGEST UPSET
   // -------------------------
   const hallOfFame = useMemo(() => {
     if (!history.length) return null;
@@ -242,7 +242,6 @@ export default function Home() {
     for (const m of history) {
       const w = getRating(m.winner);
       const l = getRating(m.loser);
-
       const diff = l - w;
 
       if (diff > maxDiff) {
@@ -253,6 +252,40 @@ export default function Home() {
 
     return { biggestUpset };
   }, [history, scores]);
+
+  // -------------------------
+  // FIXED STREAK SYSTEM (CORRECT ORDER)
+  // -------------------------
+  const streakData = useMemo(() => {
+    if (!history.length) return null;
+
+    const streaks: Record<string, number> = {};
+
+    // IMPORTANT: oldest → newest (correct logic)
+    const chronological = [...history].reverse();
+
+    for (const m of chronological) {
+      streaks[m.winner] = (streaks[m.winner] || 0) + 1;
+      streaks[m.loser] = 0;
+    }
+
+    let topPlayer = "";
+    let topStreak = 0;
+
+    for (const [player, streak] of Object.entries(streaks)) {
+      if (streak > topStreak) {
+        topStreak = streak;
+        topPlayer = player;
+      }
+    }
+
+    if (topStreak < 2) return null;
+
+    return {
+      player: topPlayer,
+      streak: topStreak,
+    };
+  }, [history]);
 
   const updateScores = async (winner: string, loser: string) => {
     const res = await fetch("/api/scores", {
@@ -427,14 +460,28 @@ export default function Home() {
 
           {hallOfFame && (
             <div className="bg-zinc-900 rounded-xl p-4 text-xs space-y-2">
-              <div className="font-bold mb-2">🏛 Hall of Fame</div>
+              <div className="font-bold mb-2">🏛 Biggest Upset</div>
               <div>
-                😭 Biggest upset 😭:{" "}
-                <b>{hallOfFame.biggestUpset?.winner}</b> vs{" "}
+                😭 <b>{hallOfFame.biggestUpset?.winner}</b> vs{" "}
                 {hallOfFame.biggestUpset?.loser}
               </div>
             </div>
           )}
+
+          {streakData && (
+            <div className="bg-red-600/20 border border-red-500 rounded-xl p-4 text-xs space-y-1">
+              <div className="font-bold text-red-400">
+                🔥 Streak Leader
+              </div>
+              <div>
+                <b>{streakData.player}</b> —{" "}
+                <span className="text-red-300 font-bold">
+                  {streakData.streak} wins
+                </span>
+              </div>
+            </div>
+          )}
+
         </div>
       </div>
 
