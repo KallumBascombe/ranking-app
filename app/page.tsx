@@ -80,6 +80,12 @@ type Match = {
   time: number;
 };
 
+type Snapshot = {
+  prevScores: Record<string, number>;
+  prevPair: [string, string];
+  prevHistory: Match[];
+};
+
 // -------------------------
 // MAIN COMPONENT
 // -------------------------
@@ -89,12 +95,10 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [history, setHistory] = useState<Match[]>([]);
 
-  const lastVoteRef = useRef<null | {
-    prevScores: Record<string, number>;
-  }>(null);
+  const lastVoteRef = useRef<Snapshot | null>(null);
 
   // -------------------------
-  // LOAD SCORES (Cosmos is source of truth)
+  // LOAD SCORES
   // -------------------------
   const loadScores = useCallback(async () => {
     try {
@@ -120,7 +124,7 @@ export default function Home() {
   }, []);
 
   // -------------------------
-  // UPDATE SCORES (SERVER AUTHORITY)
+  // UPDATE SCORES
   // -------------------------
   const updateScores = async (winner: string, loser: string) => {
     const res = await fetch("/api/scores", {
@@ -148,8 +152,12 @@ export default function Home() {
     const winner = chosen;
     const loser = chosen === a ? b : a;
 
-    // store undo snapshot locally (still useful UX)
-    lastVoteRef.current = { prevScores: scores };
+    // 🔥 FULL SNAPSHOT (this is what makes undo correct)
+    lastVoteRef.current = {
+      prevScores: scores,
+      prevPair: currentPair,
+      prevHistory: history,
+    };
 
     setHistory((h) => [
       { winner, loser, time: Date.now() },
@@ -165,19 +173,18 @@ export default function Home() {
   };
 
   // -------------------------
-  // UNDO (frontend rollback only)
+  // UNDO
   // -------------------------
-  const undoLastVote = async () => {
+  const undoLastVote = () => {
     if (!lastVoteRef.current) return;
 
-    const { prevScores } = lastVoteRef.current;
+    const snapshot = lastVoteRef.current;
 
-    setScores(prevScores);
+    setScores(snapshot.prevScores);
+    setCurrentPair(snapshot.prevPair);
+    setHistory(snapshot.prevHistory);
 
-    // NOTE: not persisting undo yet (we'll upgrade in next step if you want)
     lastVoteRef.current = null;
-
-    setHistory((h) => h.slice(1));
   };
 
   // -------------------------
@@ -197,68 +204,84 @@ export default function Home() {
   // UI
   // -------------------------
   return (
-    <main className="min-h-screen flex flex-col items-center justify-center p-6 bg-gray-50">
+    <main className="min-h-screen bg-gray-100 flex flex-col items-center px-4 py-10">
 
-      <h1 className="text-2xl font-bold mb-6">
-        Who ranks higher?
-      </h1>
+      {/* HEADER */}
+      <div className="w-full max-w-2xl flex justify-between items-center mb-10">
+        <h1 className="text-3xl font-bold">
+          Poker player ranking
+        </h1>
 
-      <div className="w-full max-w-md flex flex-col gap-6 items-center">
+        <Link
+          href="/leaderboard"
+          className="text-sm bg-black text-white px-4 py-2 rounded-lg shadow"
+        >
+          Leaderboard
+        </Link>
+      </div>
 
-        <h2 className="text-sm text-gray-500">
-          Pick who ranks higher
-        </h2>
+      {/* GAME CARD */}
+      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-lg p-8 flex flex-col items-center gap-8">
 
+        <p className="text-gray-500 text-sm">
+          Please choose the better poker player based on their overall skill
+        </p>
+
+        {/* OPTION A */}
         <button
           onClick={() => nextRound(currentPair[0])}
           disabled={isLoading}
-          className="w-full py-10 px-6 bg-white border rounded-2xl shadow-sm text-2xl font-semibold hover:shadow-lg active:scale-[0.98] transition"
+          className="w-full py-16 px-6 bg-gray-50 border rounded-2xl text-3xl font-semibold hover:bg-gray-100 active:scale-[0.98] transition"
         >
           {currentPair[0]}
         </button>
 
-        <div className="text-gray-400 font-medium">VS</div>
+        <div className="text-gray-400 font-bold text-lg tracking-widest">
+          VS
+        </div>
 
+        {/* OPTION B */}
         <button
           onClick={() => nextRound(currentPair[1])}
           disabled={isLoading}
-          className="w-full py-10 px-6 bg-white border rounded-2xl shadow-sm text-2xl font-semibold hover:shadow-lg active:scale-[0.98] transition"
+          className="w-full py-16 px-6 bg-gray-50 border rounded-2xl text-3xl font-semibold hover:bg-gray-100 active:scale-[0.98] transition"
         >
           {currentPair[1]}
         </button>
 
         {isLoading && (
-          <div className="text-sm text-blue-500 animate-pulse">
+          <p className="text-sm text-blue-500 animate-pulse">
             Updating rankings...
-          </div>
+          </p>
         )}
 
-        <div className="flex gap-4">
+        {/* ACTIONS */}
+        <div className="flex gap-6 mt-2">
           <button
             onClick={undoLastVote}
-            className="text-sm text-gray-600 underline"
+            className="text-sm text-gray-600 hover:text-black underline"
           >
-            Undo
+            Undo last vote
           </button>
-
-          <Link href="/leaderboard" className="text-sm text-blue-600 underline">
-            Leaderboard
-          </Link>
         </div>
       </div>
 
-      <div className="w-full max-w-md mt-10">
-        <h3 className="text-sm font-semibold text-gray-700 mb-2">
+      {/* HISTORY */}
+      <div className="w-full max-w-2xl mt-10">
+        <h3 className="text-sm font-semibold text-gray-700 mb-3">
           Recent matches
         </h3>
 
-        <div className="bg-white border rounded-xl p-3 space-y-2">
+        <div className="bg-white rounded-xl shadow p-4 space-y-2">
           {history.length === 0 && (
             <p className="text-sm text-gray-400">No matches yet</p>
           )}
 
           {history.map((m, i) => (
-            <div key={i} className="text-sm flex justify-between text-gray-600">
+            <div
+              key={i}
+              className="flex justify-between text-sm text-gray-600"
+            >
               <span>
                 <b>{m.winner}</b> beat {m.loser}
               </span>

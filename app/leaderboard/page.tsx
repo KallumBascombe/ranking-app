@@ -1,18 +1,23 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
+
+type Player = {
+  name: string;
+  rating: number;
+  games: number;
+};
 
 export default function LeaderboardPage() {
   const [password, setPassword] = useState("");
   const [isAuthorized, setIsAuthorized] = useState(false);
-  const [scores, setScores] = useState<Record<string, number>>({});
+
+  const [scores, setScores] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(false);
 
   const correctPassword = "admin123";
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // -------------------------
-  // LOGIN
-  // -------------------------
   function handleLogin() {
     if (password === correctPassword) {
       setIsAuthorized(true);
@@ -22,56 +27,99 @@ export default function LeaderboardPage() {
   }
 
   // -------------------------
-  // SAFE LOAD SCORES (IMPORTANT FIX)
+  // NORMALISE DATA SAFELY
+  // -------------------------
+  const normalizeScores = (data: Record<string, any>): Player[] => {
+    return Object.entries(data)
+      .map(([name, value]) => {
+        if (typeof value === "number") {
+          return {
+            name,
+            rating: value,
+            games: 0,
+          };
+        }
+
+        if (value && typeof value === "object") {
+          return {
+            name,
+            rating: Number(value.rating ?? 1000),
+            games: Number(value.games ?? 0),
+          };
+        }
+
+        return {
+          name,
+          rating: 1000,
+          games: 0,
+        };
+      })
+      .filter((p) => !isNaN(p.rating));
+  };
+
+  // -------------------------
+  // FETCH SCORES
   // -------------------------
   const loadScores = useCallback(async () => {
     try {
-      const res = await fetch("/api/scores", { cache: "no-store" });
+      setLoading(true);
+
+      const res = await fetch(`/api/scores?t=${Date.now()}`, {
+        cache: "no-store",
+        headers: {
+          "Cache-Control": "no-cache",
+        },
+      });
+
       const data = await res.json();
 
-      console.log("RAW LEADERBOARD DATA:", data);
-
-      // 🚨 SANITISE RESPONSE (CRITICAL FIX)
-      if (!data || typeof data !== "object") return;
-
-      const clean: Record<string, number> = {};
-
-      for (const [key, value] of Object.entries(data)) {
-        const num = Number(value);
-
-        if (!isNaN(num)) {
-          clean[key] = num;
-        }
+      if (!data || typeof data !== "object") {
+        setScores({});
+        return;
       }
 
-      setScores(clean);
+      setScores(data);
     } catch (err) {
       console.error("Failed to load scores:", err);
+    } finally {
+      setLoading(false);
     }
   }, []);
 
   // -------------------------
-  // REAL-TIME POLLING
+  // AUTO REFRESH
   // -------------------------
   useEffect(() => {
     if (!isAuthorized) return;
 
     loadScores();
 
-    const interval = setInterval(() => {
-      loadScores();
-    }, 3000);
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+    }
 
-    return () => clearInterval(interval);
+    intervalRef.current = setInterval(() => {
+      loadScores();
+    }, 5000);
+
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
   }, [isAuthorized, loadScores]);
+
+  // -------------------------
+  // SORTED LEADERBOARD
+  // -------------------------
+  const leaderboard = normalizeScores(scores).sort(
+    (a, b) => b.rating - a.rating
+  );
 
   // -------------------------
   // LOGIN SCREEN
   // -------------------------
   if (!isAuthorized) {
     return (
-      <main className="min-h-screen flex flex-col items-center justify-center p-6">
-
+      <main className="min-h-screen flex flex-col items-center justify-center p-6 pt-12">
         <h1 className="text-2xl font-bold mb-6">
           Leaderboard Login
         </h1>
@@ -90,38 +138,63 @@ export default function LeaderboardPage() {
         >
           Enter
         </button>
-
       </main>
     );
   }
 
-{/* DEPLOY TEST */}
-<p className="text-xs text-gray-400">
-  deploy test 2026-05-11
-</p>
-
   // -------------------------
-  // LEADERBOARD
+  // UI
   // -------------------------
   return (
-    <main className="min-h-screen flex flex-col items-center justify-center p-6">
+    <main className="min-h-screen flex flex-col items-center p-6 pt-12">
 
-      <h1 className="text-2xl font-bold mb-6">
+      {/* HEADER */}
+      <h1 className="text-2xl font-bold mb-2">
         Leaderboard
       </h1>
 
-      <div className="space-y-2 w-full max-w-md">
-        {Object.entries(scores)
-          .sort((a, b) => b[1] - a[1])
-          .map(([name, score]) => (
-            <div
-              key={name}
-              className="flex justify-between border-b py-2"
-            >
-              <span>{name}</span>
-              <span>{score}</span>
+      <div className="text-xs text-gray-400 mb-4">
+        {loading ? "Refreshing..." : "Live"}
+      </div>
+
+      <button
+        onClick={loadScores}
+        className="text-sm underline text-blue-600 mb-6"
+      >
+        Refresh
+      </button>
+
+      {/* -------------------------
+          SCROLL CONTAINER FIX
+      ------------------------- */}
+      <div className="w-full max-w-md max-h-[70vh] overflow-y-auto space-y-2">
+
+        {leaderboard.length === 0 && (
+          <p className="text-sm text-gray-400">
+            No players found
+          </p>
+        )}
+
+        {leaderboard.map((player) => (
+          <div
+            key={player.name}
+            className="flex justify-between border-b py-2"
+          >
+            <div className="flex flex-col">
+              <span className="font-medium">
+                {player.name}
+              </span>
+
+              <span className="text-xs text-gray-400">
+                {player.games} games
+              </span>
             </div>
-          ))}
+
+            <span className="font-bold">
+              {player.rating}
+            </span>
+          </div>
+        ))}
       </div>
 
     </main>
