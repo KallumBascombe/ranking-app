@@ -9,9 +9,6 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
-    env:
-      COSMOS_CONNECTION_STRING: ${{ secrets.COSMOS_CONNECTION_STRING }}
-
     steps:
       - uses: actions/checkout@v4
 
@@ -25,6 +22,8 @@ jobs:
 
       - name: Build
         run: npm run build
+        env:
+          COSMOS_CONNECTION_STRING: ${{ secrets.COSMOS_CONNECTION_STRING }}
 
       - name: Azure Login
         uses: azure/login@v2
