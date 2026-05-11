@@ -1,39 +1,57 @@
 import { NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
+import { CosmosClient } from "@azure/cosmos";
 
-const filePath = path.join(process.cwd(), "scores.json");
+const client = new CosmosClient({
+  endpoint: process.env.COSMOS_ENDPOINT!,
+  key: process.env.COSMOS_KEY!,
+});
 
-// GET: load scores
+const database = client.database(process.env.COSMOS_DB!);
+const container = database.container(process.env.COSMOS_CONTAINER!);
+
+const DOC_ID = "leaderboard";
+
+// -------------------------
+// GET SCORES
+// -------------------------
 export async function GET() {
   try {
-    if (!fs.existsSync(filePath)) {
-      return NextResponse.json({});
-    }
+    const { resource } = await container.item(DOC_ID, DOC_ID).read();
 
-    const data = fs.readFileSync(filePath, "utf8");
-
-    if (!data) {
-      return NextResponse.json({});
-    }
-
-    return NextResponse.json(JSON.parse(data));
-  } catch (error) {
-    console.error("GET /api/scores error:", error);
-    return NextResponse.json({}, { status: 500 });
+    return NextResponse.json(resource?.scores || {});
+  } catch (err: any) {
+    console.error("GET ERROR:", err.message);
+    return NextResponse.json({}, { status: 200 });
   }
 }
 
-// POST: save scores
+// -------------------------
+// SAVE SCORES
+// -------------------------
 export async function POST(req: Request) {
   try {
     const body = await req.json();
 
-    fs.writeFileSync(filePath, JSON.stringify(body, null, 2), "utf8");
+    const document = {
+      id: "leaderboard",
+      scores: body,
+    };
 
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error("POST /api/scores error:", error);
-    return NextResponse.json({ success: false }, { status: 500 });
+    const result = await container.items.upsert(document);
+
+    console.log("✅ COSMOS WRITE SUCCESS");
+
+    return NextResponse.json({
+      ok: true,
+      id: result.resource?.id,
+    });
+
+  } catch (err: any) {
+    console.error("❌ COSMOS ERROR:", err);
+
+    return NextResponse.json(
+      { error: err.message },
+      { status: 500 }
+    );
   }
 }

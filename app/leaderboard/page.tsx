@@ -16,20 +16,35 @@ export default function LeaderboardPage() {
   function handleLogin() {
     if (password === correctPassword) {
       setIsAuthorized(true);
-      loadScores(); // load immediately after login
     } else {
       alert("Wrong password");
     }
   }
 
   // -------------------------
-  // LOAD SCORES
+  // SAFE LOAD SCORES (IMPORTANT FIX)
   // -------------------------
   const loadScores = useCallback(async () => {
     try {
       const res = await fetch("/api/scores", { cache: "no-store" });
       const data = await res.json();
-      setScores(data || {});
+
+      console.log("RAW LEADERBOARD DATA:", data);
+
+      // 🚨 SANITISE RESPONSE (CRITICAL FIX)
+      if (!data || typeof data !== "object") return;
+
+      const clean: Record<string, number> = {};
+
+      for (const [key, value] of Object.entries(data)) {
+        const num = Number(value);
+
+        if (!isNaN(num)) {
+          clean[key] = num;
+        }
+      }
+
+      setScores(clean);
     } catch (err) {
       console.error("Failed to load scores:", err);
     }

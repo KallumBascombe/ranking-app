@@ -3,70 +3,156 @@
 import Link from "next/link";
 import { useState, useEffect, useCallback } from "react";
 
+// -------------------------
+// PEOPLE LIST
+// -------------------------
 const people = [
-  "Sarah Mitchell",
-  "James Carter",
-  "Emily Johnson",
-  "Daniel Brown",
-  "Sophia Wilson",
-  "Michael Lee",
+  "Kallum Bascombe",
+  "Johnathan Brown",
+  "Jamie Fisher",
+  "Bogdan Constantin",
+  "Andy Mcleod",
+  "Sanjay Chudasama",
+  "Alvin Roy",
+  "Deano",
+  "Joe Smith",
+  "Bruno",
+  "Juniel Sueta",
+  "Steve Law",
+  "Florian Pajour",
+  "Tomasz TM",
+  "Jo C",
+  "Tom Hudson",
+  "Tom Byfield",
+  "Nippy",
+  "Pete Fisher",
+  "Colin Mitchell",
+  "Liviu",
+  "Graham Smith",
+  "Neil Laybourne",
+  "Sandra Hardwick",
+  "Faye Kew",
+  "Raghu",
+  "Bryan Clark",
+  "Matt Miller",
+  "Dave Dyer",
+  "Melvin Saunders",
+  "Deb Fisher",
+  "Andy Cannon",
+  "Errol Williams",
+  "David Redshaw",
+  "Jemma-Louise Hart",
+  "Jack Dealer",
+  "Justin Reakes",
+  "Ewan",
+  "Martin Connolly",
+  "Tim Bohane",
+  "Telmo",
+  "Victor Ribeiro",
+  "Minnow",
+  "Ryan Bascombe",
+  "Barry Cobb",
+  "Adam Bailey",
+  "Ben Moody",
+  "Jason Moody",
+  "Emzy",
+  "Darrell Rock",
+  "Karin Willis",
+  "Sean Quinn",
+  "Matthew Bowden",
+  "Lucky",
+  "Derek Potter",
+  "Weasel",
+  "Spud",
+  "Owner Adam",
+  "John Watkins",
+  "John Beard",
+  "Alin",
+  "Jamie Hall",
 ];
 
-const initialScores = people.reduce((acc, person) => {
-  acc[person] = 1000;
-  return acc;
-}, {} as Record<string, number>);
+// -------------------------
+// DEFAULT SAFE SCORES
+// -------------------------
+const createInitialScores = () => {
+  const obj: Record<string, number> = {};
+  people.forEach((p) => (obj[p] = 1000));
+  return obj;
+};
 
+// -------------------------
+// MAIN COMPONENT
+// -------------------------
 export default function Home() {
   const [currentPair, setCurrentPair] = useState<[string, string]>(["", ""]);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [lastPair, setLastPair] = useState<string>("");
-  const [scores, setScores] = useState<Record<string, number>>(initialScores);
+  const [lastPair, setLastPair] = useState("");
+  const [scores, setScores] = useState<Record<string, number>>(createInitialScores());
   const [isLoading, setIsLoading] = useState(false);
 
   // -------------------------
-  // LOAD SCORES
+  // LOAD SCORES (ROBUST)
   // -------------------------
   const loadScores = useCallback(async () => {
     try {
       const res = await fetch("/api/scores", { cache: "no-store" });
       const data = await res.json();
 
-      if (data && Object.keys(data).length > 0) {
-        setScores(data);
+      console.log("📥 RAW SCORES FROM API:", data);
+
+      if (!data || typeof data !== "object") return;
+
+      const clean: Record<string, number> = {};
+
+      for (const name of people) {
+        const value = Number(data[name]);
+
+        clean[name] = !isNaN(value) ? value : 1000;
       }
+
+      setScores(clean);
     } catch (err) {
       console.error("Load error:", err);
     }
   }, []);
 
   // -------------------------
-  // SAVE SCORES
+  // SAVE SCORES (SAFE)
   // -------------------------
   const saveScores = useCallback(async (updated: Record<string, number>) => {
-    try {
-      await fetch("/api/scores", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updated),
-      });
-    } catch (err) {
-      console.error("Save error:", err);
+    const safe: Record<string, number> = {};
+
+    for (const name of people) {
+      const v = Number(updated[name]);
+      safe[name] = !isNaN(v) ? v : 1000;
     }
+
+    console.log("📤 SAVING SCORES:", safe);
+
+    await fetch("/api/scores", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(safe),
+    });
   }, []);
 
   // -------------------------
-  // REAL-TIME POLLING 🔁
+  // POLLING
   // -------------------------
-  useEffect(() => {
-    loadScores(); // initial load
+useEffect(() => {
+  loadScores();
 
-    const interval = setInterval(() => {
-      loadScores();
-    }, 3000); // every 3 seconds
+  const onFocus = () => loadScores();
 
-    return () => clearInterval(interval);
-  }, [loadScores]);
+  window.addEventListener("focus", onFocus);
+
+  const interval = setInterval(loadScores, 8000);
+
+  return () => {
+    window.removeEventListener("focus", onFocus);
+    clearInterval(interval);
+  };
+}, [loadScores]);
 
   // -------------------------
   // PAIR GENERATION
@@ -79,18 +165,18 @@ export default function Home() {
     do {
       a = people[Math.floor(Math.random() * people.length)];
 
-      const scoreA = scores[a];
+      const scoreA = scores[a] ?? 1000;
 
       const candidates = people
         .filter((p) => p !== a)
         .map((p) => ({
           name: p,
-          diff: Math.abs(scores[p] - scoreA),
+          diff: Math.abs((scores[p] ?? 1000) - scoreA),
         }))
-        .sort((x, y) => x.diff - y.diff);
+        .sort((x, y) => x.diff - y.diff)
+        .slice(0, 3);
 
-      const top = candidates.slice(0, 3);
-      b = top[Math.floor(Math.random() * top.length)].name;
+      b = candidates[Math.floor(Math.random() * candidates.length)].name;
 
       key = [a, b].sort().join("-");
     } while (key === lastPair);
@@ -99,18 +185,16 @@ export default function Home() {
   }, [scores, lastPair]);
 
   // -------------------------
-  // SCORE UPDATE
+  // UPDATE SCORES
   // -------------------------
   const updateScores = (winner: string, loser: string) => {
     setScores((prev) => {
       const K = 32;
 
-      const w = prev[winner];
-      const l = prev[loser];
+      const w = prev[winner] ?? 1000;
+      const l = prev[loser] ?? 1000;
 
-      const expectedW =
-        1 / (1 + Math.pow(10, (l - w) / 400));
-
+      const expectedW = 1 / (1 + Math.pow(10, (l - w) / 400));
       const expectedL = 1 - expectedW;
 
       const updated = {
@@ -119,7 +203,8 @@ export default function Home() {
         [loser]: Math.round(l + K * (0 - expectedL)),
       };
 
-      saveScores(updated); // persist immediately
+      saveScores(updated);
+
       return updated;
     });
   };
@@ -133,6 +218,7 @@ export default function Home() {
     setIsLoading(true);
 
     const [a, b] = currentPair;
+
     const winner = chosen;
     const loser = chosen === a ? b : a;
 
@@ -146,10 +232,10 @@ export default function Home() {
   };
 
   // -------------------------
-  // INIT PAIR
+  // INIT
   // -------------------------
   useEffect(() => {
-    if (Object.keys(scores).length > 0 && currentPair[0] === "") {
+    if (Object.keys(scores).length && !currentPair[0]) {
       setCurrentPair(getRandomPair());
     }
   }, [scores, currentPair, getRandomPair]);
@@ -164,7 +250,6 @@ export default function Home() {
         Who ranks higher?
       </h1>
 
-      {/* MENU */}
       <div className="absolute top-4 right-4">
         <button
           onClick={() => setMenuOpen(!menuOpen)}
@@ -186,7 +271,6 @@ export default function Home() {
         )}
       </div>
 
-      {/* GAME */}
       <div className="w-full max-w-md flex flex-col gap-6">
 
         {isLoading && (
